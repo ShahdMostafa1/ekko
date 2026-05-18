@@ -1,0 +1,220 @@
+import { useState, useEffect } from 'react'
+
+const INSTRUMENTS = [
+  { id: 'piano',   emoji: '🎹', label: 'Piano'   },
+  { id: 'strings', emoji: '🎻', label: 'Strings' },
+  { id: 'guitar',  emoji: '🎸', label: 'Guitar'  },
+  { id: 'flute',   emoji: '🪈', label: 'Flute'   },
+  { id: 'synth',   emoji: '🎛️', label: 'Synth'   },
+  { id: 'drums',   emoji: '🥁', label: 'Drums'   },
+  { id: 'bass',    emoji: '🎵', label: 'Bass'    },
+  { id: 'oud',     emoji: '🪕', label: 'Oud'     },
+]
+
+const SCALES = [
+  { id: 'C major', label: 'C Major', feel: 'Bright & clear'  },
+  { id: 'D minor', label: 'D Minor', feel: 'Melancholic'     },
+  { id: 'G major', label: 'G Major', feel: 'Warm & open'     },
+  { id: 'A minor', label: 'A Minor', feel: 'Emotional'       },
+  { id: 'F major', label: 'F Major', feel: 'Gentle & soft'   },
+  { id: 'B minor', label: 'B Minor', feel: 'Dark & deep'     },
+]
+
+export default function CoCreation({ mood, regionDefaults, region, onGenerate }) {
+  const [tempo, setTempo]             = useState(mood?.energy > 0.5 ? 110 : 72)
+  const [selectedScale, setScale]     = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
+  const [selectedInstr, setInstr]     = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
+  const [artistStyles, setArtistStyles] = useState([])
+  const [selectedArtist, setArtist]   = useState('')
+  const [loadingStyles, setLoadingStyles] = useState(false)
+
+  // Load artist styles for this region
+  useEffect(() => {
+    if (!region?.id) return
+    setLoadingStyles(true)
+    fetch(`http://localhost:8000/music/artist-styles?region=${region.id}`)
+      .then(r => r.json())
+      .then(data => {
+        setArtistStyles(data.styles || [])
+        setArtist('') // reset on region change
+      })
+      .catch(() => setArtistStyles([]))
+      .finally(() => setLoadingStyles(false))
+  }, [region?.id])
+
+  const toggleInstr = (id) => {
+    setInstr(prev =>
+      prev.includes(id)
+        ? prev.length > 1 ? prev.filter(i => i !== id) : prev
+        : prev.length < 3 ? [...prev, id] : prev
+    )
+  }
+
+  const tempoLabel = (
+    tempo < 70  ? 'Very slow' :
+    tempo < 90  ? 'Slow'      :
+    tempo < 110 ? 'Moderate'  :
+    tempo < 130 ? 'Upbeat'    : 'Fast'
+  )
+
+  const handleGenerate = () => {
+    onGenerate({
+      tempo_bpm:       tempo,
+      scale:           selectedScale,
+      instruments:     selectedInstr,
+      artist_style_id: selectedArtist,
+    })
+  }
+
+  const selectedArtistObj = artistStyles.find(a => a.id === selectedArtist)
+
+  return (
+    <div className="cocreate">
+      <div className="cc-header">
+        <p className="cc-mood-tag">{mood?.label || 'Your mood'}</p>
+        <h2 className="cc-headline">Shape your <em>sound</em></h2>
+        <p className="cc-sub">Customise your music before generating</p>
+      </div>
+
+      {/* ── Artist Style ── */}
+      <div className="cc-section">
+        <div className="cc-section-top">
+          <span className="cc-label">🎤 Artist Style</span>
+          <span className="cc-value">
+            {selectedArtistObj ? selectedArtistObj.label : 'Default style'}
+          </span>
+        </div>
+        {loadingStyles ? (
+          <div className="cc-artist-loading">Loading styles…</div>
+        ) : (
+          <div className="cc-artist-grid">
+            {/* None option */}
+            <button
+              className={`cc-artist-opt ${selectedArtist === '' ? 'sel' : ''}`}
+              onClick={() => setArtist('')}
+            >
+              <span className="cao-emoji">🎵</span>
+              <span className="cao-label">Default</span>
+              <span className="cao-desc">AI chooses</span>
+            </button>
+            {artistStyles.map(a => (
+              <button
+                key={a.id}
+                className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''}`}
+                onClick={() => setArtist(a.id)}
+              >
+                <span className="cao-emoji">🎤</span>
+                <span className="cao-label">{a.label}</span>
+                <span className="cao-desc">{a.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Tempo ── */}
+      <div className="cc-section">
+        <div className="cc-section-top">
+          <span className="cc-label">Tempo</span>
+          <span className="cc-value">{tempo} BPM · <em>{tempoLabel}</em></span>
+        </div>
+        <div className="cc-slider-wrap">
+          <input
+            type="range" min={40} max={180} value={tempo}
+            onChange={e => setTempo(Number(e.target.value))}
+            className="cc-slider"
+          />
+          <div className="cc-slider-ticks">
+            {['40', '80', '120', '180'].map(t => <span key={t}>{t}</span>)}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Scale ── */}
+      <div className="cc-section">
+        <div className="cc-section-top">
+          <span className="cc-label">Scale</span>
+        </div>
+        <div className="cc-scale-grid">
+          {SCALES.map(s => (
+            <button
+              key={s.id}
+              className={`cc-scale-opt ${selectedScale === s.id ? 'sel' : ''}`}
+              onClick={() => setScale(s.id)}
+            >
+              <span className="cso-name">{s.label}</span>
+              <span className="cso-feel">{s.feel}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Instruments ── */}
+      <div className="cc-section">
+        <div className="cc-section-top">
+          <span className="cc-label">Instruments</span>
+          <span className="cc-value">{selectedInstr.length}/3 selected</span>
+        </div>
+        <div className="cc-instr-grid">
+          {INSTRUMENTS.map(ins => (
+            <button
+              key={ins.id}
+              className={`cc-instr ${selectedInstr.includes(ins.id) ? 'sel' : ''}`}
+              onClick={() => toggleInstr(ins.id)}
+            >
+              <span className="ci-emoji">{ins.emoji}</span>
+              <span className="ci-label">{ins.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button className="cc-cta" onClick={handleGenerate}>
+        {selectedArtistObj
+          ? `Generate in ${selectedArtistObj.label} →`
+          : 'Generate my music →'
+        }
+      </button>
+      <p className="cc-xp">+20 XP for co-creating</p>
+
+      <style>{`
+        .cc-artist-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 8px;
+          margin-top: 4px;
+        }
+        .cc-artist-opt {
+          display: flex; flex-direction: column; align-items: flex-start;
+          gap: 2px; padding: 10px 12px;
+          border: 1.5px solid rgba(176,158,224,.2);
+          border-radius: 12px; background: rgba(255,255,255,.03);
+          cursor: pointer; text-align: left;
+          transition: all .18s;
+        }
+        .cc-artist-opt:hover {
+          border-color: #7c5ce7;
+          background: rgba(124,92,231,.08);
+        }
+        .cc-artist-opt.sel {
+          border-color: #7c5ce7;
+          background: rgba(124,92,231,.15);
+          box-shadow: 0 0 0 1px #7c5ce7;
+        }
+        .cao-emoji { font-size: 18px; line-height: 1; }
+        .cao-label {
+          font-size: 12px; font-weight: 700;
+          color: #e0d8ff; line-height: 1.2;
+        }
+        .cao-desc {
+          font-size: 10px; color: #8b7eb8;
+          line-height: 1.3; margin-top: 1px;
+        }
+        .cc-artist-loading {
+          font-size: 13px; color: #8b7eb8;
+          padding: 12px 0; text-align: center;
+        }
+      `}</style>
+    </div>
+  )
+}
