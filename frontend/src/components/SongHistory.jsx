@@ -26,7 +26,7 @@ export default function SongHistory({ userId = '' }) {
 
   useEffect(() => {
     if (!userId) { setLoading(false); return }
-    fetch(`http://localhost:8000/music/history/${userId}`)
+    fetch(`${import.meta.env.VITE_API_URL}/music/history/${userId}`)
       .then(r => r.json())
       .then(data => {
         setSongs(data.songs || [])

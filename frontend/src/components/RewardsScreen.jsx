@@ -290,7 +290,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
 
   useEffect(() => {
     if (!userId) return
-    fetch(`http://localhost:8000/music/history/${userId}`)
+    fetch(`${import.meta.env.VITE_API_URL}/music/history/${userId}`)
       .then(r => r.json())
       .then(data => {
         setByRegion(data.by_region || {})
@@ -298,7 +298,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       })
       .catch(() => {})
 
-    fetch(`http://localhost:8000/mood/history/${userId}`)
+    fetch(`${import.meta.env.VITE_API_URL}/mood/history/${userId}`)
       .then(r => r.json())
       .then(data => setMoodLogs(data.logs || []))
       .catch(() => {})

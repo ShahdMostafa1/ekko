@@ -49,7 +49,7 @@ export default function MusicPlayer({ params, onSaved }) {
       else                    setPollStatus(`Almost there… ${elapsed}s`);
 
       try {
-        const res  = await fetch(`http://localhost:8000/music/status/${taskId}`);
+        const res  = await fetch(`${import.meta.env.VITE_API_URL}/music/status/${taskId}`);
         const data = await res.json();
 
         if (data.status === "SUCCESS" && data.audio_url) {
@@ -101,7 +101,7 @@ export default function MusicPlayer({ params, onSaved }) {
 
     console.log("[save] Saving song for user:", params.user_id, "audio:", audioUrl);
 
-    fetch("http://localhost:8000/music/save", {
+    fetch("${import.meta.env.VITE_API_URL}/music/save", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(body),

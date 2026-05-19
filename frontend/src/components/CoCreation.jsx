@@ -32,7 +32,7 @@ export default function CoCreation({ mood, regionDefaults, region, onGenerate })
   useEffect(() => {
     if (!region?.id) return
     setLoadingStyles(true)
-    fetch(`http://localhost:8000/music/artist-styles?region=${region.id}`)
+    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${region.id}`)
       .then(r => r.json())
       .then(data => {
         setArtistStyles(data.styles || [])

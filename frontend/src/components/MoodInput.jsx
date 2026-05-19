@@ -204,7 +204,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       formData.append("user_id", userId || "");
       formData.append("region",  region?.id || "");
 
-      const res = await fetch("http://localhost:8000/mood/detect", {
+      const res = await fetch("${import.meta.env.VITE_API_URL}/mood/detect", {
         method: "POST",
         body:   formData,
       });
@@ -248,7 +248,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
     setTextAnalysing(true);
 
     try {
-      const res = await fetch("http://localhost:8000/mood/detect-text", {
+      const res = await fetch("${import.meta.env.VITE_API_URL}/mood/detect-text", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({

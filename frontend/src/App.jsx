@@ -109,7 +109,7 @@ export default function App() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch('http://localhost:8000/music/generate', {
+      const res = await fetch('${import.meta.env.VITE_API_URL}/music/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -267,7 +267,7 @@ export default function App() {
     // Fire daily checkin — populates user_rewards and xp_events tables
     const currentUser = userRef.current
     if (currentUser) {
-      fetch('http://localhost:8000/rewards/checkin', {
+      fetch('${import.meta.env.VITE_API_URL}/rewards/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: currentUser.id }),
