@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from './lib/supabase'
-import AuthScreen    from './components/AuthScreen'
-import Onboarding    from './components/Onboarding'
+import AuthScreen     from './components/AuthScreen'
+import Onboarding     from './components/Onboarding'
 import LanguagePicker from './components/LanguagePicker'
-import MoodInput     from './components/MoodInput'
-import CoCreation    from './components/CoCreation'
-import MusicPlayer   from './components/MusicPlayer'
-import SongHistory   from './components/SongHistory'
-import RewardsScreen from './components/RewardsScreen'
-import RewardBadge   from './components/RewardBadge'
-import BackButton    from './components/BackButton'
+import MoodInput      from './components/MoodInput'
+import CoCreation     from './components/CoCreation'
+import MusicPlayer    from './components/MusicPlayer'
+import SongHistory    from './components/SongHistory'
+import RewardsScreen  from './components/RewardsScreen'
+import RewardBadge    from './components/RewardBadge'
+import BackButton     from './components/BackButton'
+import AdminDashboard from './components/AdminDashboard'
 import './App.css'
 
 const STARS = Array.from({ length: 55 }).map((_, i) => ({
@@ -33,14 +34,16 @@ const REGION_DEFAULTS = {
 }
 
 const BACK_MAP = {
-  onboarding:  { screen: 'auth',       label: 'Sign out'       },
-  language:    { screen: 'onboarding', label: 'Change region'  },
-  mood:        { screen: 'language',   label: 'Change language' },
-  cocreation:  { screen: 'mood',       label: 'Change mood'    },
-  player:      { screen: 'mood',       label: 'New mood'       },
-  history:     { screen: 'mood',       label: 'Back'           },
-  rewards:     { screen: 'mood',       label: 'Back'           },
+  onboarding: { screen: 'auth',       label: 'Sign out'        },
+  language:   { screen: 'onboarding', label: 'Change region'   },
+  mood:       { screen: 'language',   label: 'Change language'  },
+  cocreation: { screen: 'mood',       label: 'Change mood'      },
+  player:     { screen: 'mood',       label: 'New mood'         },
+  history:    { screen: 'mood',       label: 'Back'             },
+  rewards:    { screen: 'mood',       label: 'Back'             },
 }
+
+const ADMIN_EMAIL = 'admin@ekko.app'
 
 export default function App() {
   const [screen, setScreen]           = useState('loading')
@@ -70,11 +73,9 @@ export default function App() {
     setTimeout(() => setReward(null), 3000)
   }
 
-  // ── FIX: Read XP from DB before writing to avoid stale-state overwrites
   const addXp = async (amount, action) => {
     const currentUser = userRef.current
     if (currentUser) {
-      // Always read the live value from the database first
       const { data: profile } = await supabase
         .from('profiles')
         .select('xp')
@@ -82,7 +83,7 @@ export default function App() {
         .single()
 
       const currentXp = profile?.xp || 0
-      const newXp = currentXp + amount
+      const newXp     = currentXp + amount
 
       await supabase
         .from('profiles')
@@ -109,7 +110,7 @@ export default function App() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch('${import.meta.env.VITE_API_URL}/music/generate', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/music/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,10 +174,15 @@ export default function App() {
   }, [generateMusic])
 
   // ── Auth ──────────────────────────────────────────────────────────────
-  // FIX: loadProfile now correctly reads and sets XP from the database
   const loadProfile = async (authUser) => {
     setUser(authUser)
     userRef.current = authUser
+
+    // Admin bypasses everything and goes straight to dashboard
+    if (authUser.email === ADMIN_EMAIL) {
+      setScreen('admin')
+      return
+    }
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -185,7 +191,6 @@ export default function App() {
       .single()
 
     if (profile) {
-      // This now correctly restores XP after logout/restart
       setXp(profile.xp || 0)
       if (profile.region && profile.region !== 'global') {
         setRegion({ id: profile.region, emoji: '🌍', label: profile.region })
@@ -210,7 +215,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         setUser(null)
-        userRef.current = null
+        userRef.current       = null
         setXp(0)
         setRegion(null)
         setLanguage(null)
@@ -230,7 +235,13 @@ export default function App() {
   const handleAuth = ({ user: authUser, profile }) => {
     setUser(authUser)
     userRef.current = authUser
-    // FIX: use DB value, not default 0
+
+    // Admin bypasses everything and goes straight to dashboard
+    if (authUser.email === ADMIN_EMAIL) {
+      setScreen('admin')
+      return
+    }
+
     setXp(profile?.xp || 0)
     if (profile?.region && profile.region !== 'global') {
       setRegion({ id: profile.region, emoji: '🌍', label: profile.region })
@@ -259,18 +270,16 @@ export default function App() {
     setScreen('mood')
   }
 
-  // FIX: now calls /rewards/checkin to populate user_rewards + xp_events
   const handleMoodSubmit = async (mood) => {
     setMoodData(mood)
     await addXp(10, 'Mood shared')
 
-    // Fire daily checkin — populates user_rewards and xp_events tables
     const currentUser = userRef.current
     if (currentUser) {
-      fetch('${import.meta.env.VITE_API_URL}/rewards/checkin', {
-        method: 'POST',
+      fetch(`${import.meta.env.VITE_API_URL}/rewards/checkin`, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id }),
+        body:    JSON.stringify({ user_id: currentUser.id }),
       }).catch(err => console.warn('[ekko] Checkin failed silently:', err))
     }
 
@@ -320,9 +329,14 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────
   if (screen === 'loading') return (
-    <div className="ekko-root" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+    <div className="ekko-root" style={{ display:'flex', justifyContent:'center', alignItems:'center' }}>
       <div className="gen-orb" />
     </div>
+  )
+
+  // Admin gets full viewport takeover — no header, stars, or nav
+  if (screen === 'admin') return (
+    <AdminDashboard onExit={handleSignOut} />
   )
 
   return (
@@ -340,7 +354,7 @@ export default function App() {
 
       {screen !== 'auth' && screen !== 'loading' && (
         <header className="ekko-header">
-          <div className="ekko-logo" onClick={() => setScreen('mood')} style={{ cursor: 'pointer' }}>
+          <div className="ekko-logo" onClick={() => setScreen('mood')} style={{ cursor:'pointer' }}>
             Ekko
             {region && (
               <span className="ekko-region-tag">
@@ -349,7 +363,7 @@ export default function App() {
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
             {xp > 0 && <div className="xp-chip">{xp} XP</div>}
             <button className="nav-history-btn" onClick={() => setScreen('history')}>🎵 Songs</button>
             <button className="nav-history-btn" onClick={() => setScreen('rewards')}>🏅 Rewards</button>
@@ -367,10 +381,8 @@ export default function App() {
 
         {screen === 'auth'       && <AuthScreen onAuth={handleAuth} />}
         {screen === 'onboarding' && <Onboarding onComplete={handleOnboard} />}
-        {screen === 'language'   && (
-          <LanguagePicker region={region} onComplete={handleLanguagePick} />
-        )}
-        {screen === 'mood' && (
+        {screen === 'language'   && <LanguagePicker region={region} onComplete={handleLanguagePick} />}
+        {screen === 'mood'       && (
           <MoodInput
             onSubmit={handleMoodSubmit}
             onMoodDetected={() => {}}
@@ -401,8 +413,8 @@ export default function App() {
             />
           </div>
         )}
-        {screen === 'history'  && <SongHistory userId={userRef.current?.id} />}
-        {screen === 'rewards'  && <RewardsScreen xp={xp} userId={userRef.current?.id} />}
+        {screen === 'history' && <SongHistory  userId={userRef.current?.id} />}
+        {screen === 'rewards' && <RewardsScreen xp={xp} userId={userRef.current?.id} />}
       </main>
 
       {reward && <RewardBadge label={reward.label} sub={reward.sub} />}
