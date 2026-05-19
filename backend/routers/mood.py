@@ -9,8 +9,8 @@ Pipeline:
      — transcribes + detects emotion natively, no Whisper needed
      — handles dialectal Arabic, Egyptian, Levantine, Gulf, etc.
   2. librosa extracts acoustic features (energy, pitch, tempo)
-  3. Parallel text analysis on transcript (Fix 2: blend acoustic + text)
-  4. HuggingFace classifier as last-resort fallback
+  3. Parallel text analysis on transcript (blend acoustic + text)
+  4. HuggingFace classifier as last-resort fallback (optional — graceful if not installed)
   5. Persisted to Supabase mood_logs
 """
 from __future__ import annotations
@@ -26,7 +26,6 @@ router = APIRouter(prefix="/mood", tags=["Layer 2 — Mood Engine"])
 
 _sentiment_pipe = None
 
-# Try these models in order until one works
 AUDIO_MODELS = [
     "google/gemini-2.0-flash-001",
     "google/gemini-flash-1.5",
@@ -39,20 +38,24 @@ TEXT_MODELS = [
     "deepseek/deepseek-v3-base:free",
 ]
 
-# Emotions considered "unknown" or unreliable from audio classifier
 UNKNOWN_EMOTIONS = {"unknown", "UNKNOWN", "", None}
 
 
+# FIX: graceful optional import — won't crash if transformers not installed
 def _get_sentiment():
     global _sentiment_pipe
     if _sentiment_pipe is None:
-        from transformers import pipeline
-        _sentiment_pipe = pipeline(
-            "text-classification",
-            model="j-hartmann/emotion-english-distilroberta-base",
-            top_k=None,
-        )
-    return _sentiment_pipe
+        try:
+            from transformers import pipeline
+            _sentiment_pipe = pipeline(
+                "text-classification",
+                model="j-hartmann/emotion-english-distilroberta-base",
+                top_k=None,
+            )
+        except ImportError:
+            print("[mood] transformers not installed — HF fallback disabled")
+            _sentiment_pipe = "unavailable"
+    return _sentiment_pipe if _sentiment_pipe != "unavailable" else None
 
 
 def _openrouter_headers(api_key: str) -> dict:
@@ -166,7 +169,6 @@ Return ONLY valid JSON, no markdown, no preamble, no explanation:
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"].strip()
 
-            # Strip markdown fences if present
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -281,22 +283,12 @@ Return ONLY valid JSON, no markdown, no preamble:
     return None
 
 
-# ── Fix 2: Blend acoustic + text emotion signals ───────────────────────────────
+# ── Blend acoustic + text emotion signals ─────────────────────────────────────
 def _blend_audio_and_text(
     audio_result: dict,
     text_result:  dict,
     acoustic:     dict,
 ) -> dict:
-    """
-    Merge audio-agent result with text-agent result.
-
-    Strategy:
-    - If audio returned UNKNOWN or low confidence (<0.5): trust text 100%
-    - If audio returned a valid emotion AND confidence >= 0.5:
-        - If both agree on top_emotion: boost confidence, average valence/arousal
-        - If they disagree: trust text for emotion label (words > acoustics),
-          use acoustic arousal to calibrate intensity, average valence
-    """
     audio_emotion    = audio_result.get("top_emotion", "")
     audio_confidence = audio_result.get("confidence", 0.0)
     text_emotion     = text_result.get("top_emotion", "neutral")
@@ -305,7 +297,6 @@ def _blend_audio_and_text(
     is_audio_unknown = audio_emotion in UNKNOWN_EMOTIONS or audio_confidence < 0.5
 
     if is_audio_unknown:
-        # Trust text completely, use acoustic for arousal only
         print(f"[mood:blend] audio UNKNOWN/low-conf ({audio_confidence:.2f}) → trusting text: {text_emotion}")
         ac_arousal = min(acoustic.get("energy", 0.005) * 20, 1.0)
         blended_arousal = round(0.4 * text_result.get("arousal", 0.5) + 0.6 * ac_arousal, 3)
@@ -323,7 +314,6 @@ def _blend_audio_and_text(
         }
 
     if audio_emotion == text_emotion:
-        # Both agree — high confidence blend
         print(f"[mood:blend] audio + text AGREE on: {audio_emotion} → boosting confidence")
         return {
             "top_emotion":       audio_emotion,
@@ -340,7 +330,6 @@ def _blend_audio_and_text(
             "method":            "full_blend_agree",
         }
 
-    # Disagree — words win, acoustics calibrate arousal
     print(f"[mood:blend] audio={audio_emotion} vs text={text_emotion} → text wins (words > acoustics)")
     ac_arousal      = min(acoustic.get("energy", 0.005) * 20, 1.0)
     blended_arousal = round(0.5 * text_result.get("arousal", 0.5) + 0.5 * ac_arousal, 3)
@@ -360,7 +349,7 @@ def _blend_audio_and_text(
     }
 
 
-# ── HuggingFace fallback ──────────────────────────────────────────────────────
+# ── HuggingFace fallback (optional — graceful if transformers not installed) ──
 def _classifier_emotion(transcript: str, acoustic: dict | None = None) -> dict:
     EMOTION_TO_VA = {
         "joy":      ( 0.8,  0.7),
@@ -371,9 +360,15 @@ def _classifier_emotion(transcript: str, acoustic: dict | None = None) -> dict:
         "disgust":  (-0.6,  0.3),
         "fear":     (-0.4,  0.7),
     }
-    try:
-        scores = _get_sentiment()(transcript)[0]
-    except Exception:
+
+    pipe = _get_sentiment()
+    if pipe is not None:
+        try:
+            scores = pipe(transcript)[0]
+        except Exception:
+            scores = [{"label": "neutral", "score": 1.0}]
+    else:
+        # transformers not available — acoustic-only fallback
         scores = [{"label": "neutral", "score": 1.0}]
 
     top = max(scores, key=lambda x: x["score"])
@@ -394,8 +389,8 @@ def _classifier_emotion(transcript: str, acoustic: dict | None = None) -> dict:
         "valence":           raw_valence,
         "arousal":           round(raw_arousal, 3),
         "confidence":        round(top["score"], 3),
-        "reasoning":         "Detected via HuggingFace classifier + acoustic fusion.",
-        "all_emotions":      sorted(scores, key=lambda x: x["score"], reverse=True),
+        "reasoning":         "Detected via acoustic analysis.",
+        "all_emotions":      scores,
     }
 
 
@@ -501,11 +496,9 @@ async def detect_mood(
 
     print(f"[mood] received audio: {filename} ({len(audio_bytes)} bytes) mime={mime_type}")
 
-    # ── 1. Extract acoustic features ──────────────────────────────────────
     feats = extract_acoustic_features(audio_bytes, suffix=suffix)
     print(f"[mood] acoustic: {feats}")
 
-    # ── 2. Gemini audio agent ─────────────────────────────────────────────
     audio_b64    = base64.b64encode(audio_bytes).decode("utf-8")
     audio_result = _gemini_audio_agent(
         audio_b64 = audio_b64,
@@ -514,8 +507,6 @@ async def detect_mood(
         region    = region,
     )
 
-    # ── 3. Fix 2: Always run text agent on transcript in parallel ─────────
-    #    Then blend audio + text signals for final result
     final = None
 
     if audio_result:
@@ -523,29 +514,26 @@ async def detect_mood(
         detected_lang = audio_result.get("language", "unknown")
         audio_emotion = audio_result.get("top_emotion", "")
 
-        # Run text agent on the transcript if we have one
         text_result = None
         if transcript and transcript.strip():
             print(f"[mood] running text agent on transcript: '{transcript}'")
             text_result = _gemini_text_agent(text=transcript, region=region)
 
         if text_result:
-            # Blend audio + text (Fix 2)
             blended = _blend_audio_and_text(audio_result, text_result, feats)
-            top_emotion  = blended["top_emotion"]
-            raw_valence  = blended["valence"]
-            arousal      = blended["arousal"]
-            confidence   = blended["confidence"]
-            reasoning    = blended["reasoning"]
-            all_emotions = blended["all_emotions"]
-            transcript   = blended.get("transcript", transcript)
+            top_emotion   = blended["top_emotion"]
+            raw_valence   = blended["valence"]
+            arousal       = blended["arousal"]
+            confidence    = blended["confidence"]
+            reasoning     = blended["reasoning"]
+            all_emotions  = blended["all_emotions"]
+            transcript    = blended.get("transcript", transcript)
             detected_lang = blended.get("language", detected_lang)
-            method       = blended["method"]
+            method        = blended["method"]
             print(f"[mood] blend result: {method} → emotion={top_emotion} confidence={confidence}")
         else:
-            # Text agent failed — use audio result directly, but reject UNKNOWN
             if audio_emotion in UNKNOWN_EMOTIONS:
-                print("[mood] audio UNKNOWN + text failed → HF fallback on empty")
+                print("[mood] audio UNKNOWN + text failed → HF fallback")
                 fb           = _classifier_emotion("I feel something", feats)
                 top_emotion  = fb["top_emotion"]
                 raw_valence  = fb["valence"]
@@ -564,7 +552,6 @@ async def detect_mood(
                 method       = "gemini_audio_only"
 
     else:
-        # ── 4. Full fallback: audio agent failed completely ────────────────
         print("[mood] Gemini audio failed — using HF fallback")
         fb            = _classifier_emotion("I feel something", feats)
         transcript    = ""
