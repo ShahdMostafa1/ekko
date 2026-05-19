@@ -13,7 +13,7 @@ The FastAPI server was not running. This project requires two separate processes
 
 | Process | Command | URL |
 |---|---|---|
-| Backend (FastAPI) | `uvicorn main:app --reload` | http://localhost:8000/docs |
+| Backend (FastAPI) | `uvicorn main:app --reload` | ${import.meta.env.VITE_API_URL}/docs |
 | Frontend (React/Vite) | `npm run dev` | http://localhost:5173 |
 
 Follow the steps below to get both running.
@@ -109,7 +109,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 INFO:     Application startup complete.
 ```
 
-Open **http://localhost:8000/docs** → Swagger UI with all endpoints.
+Open **${import.meta.env.VITE_API_URL}/docs** → Swagger UI with all endpoints.
 
 ### Step 5 — Install and run the frontend
 
@@ -129,7 +129,7 @@ Open **http://localhost:5173** → Ekko UI.
 
 ## Testing Each Layer Without the Frontend
 
-Use the Swagger UI at `http://localhost:8000/docs`:
+Use the Swagger UI at `${import.meta.env.VITE_API_URL}/docs`:
 
 ### Layer 2 — Test mood detection
 - `POST /mood/detect`
