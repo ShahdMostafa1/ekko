@@ -172,8 +172,10 @@ export default function AdminDashboard({ onExit }) {
   }, [])
 
   useEffect(() => {
-  loadData()
-}, [loadData])
+    if (authed) loadData()
+  }, [authed, loadData])
+
+  if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />
 
   // ── Enriched user rows ──────────────────────────────────────────────────────
   const emailOf = {}

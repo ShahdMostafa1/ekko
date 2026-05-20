@@ -2,29 +2,37 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
 const PASSWORD_RULES = [
-  { key: 'lower',   label: 'One lowercase letter (a–z)',  test: p => /[a-z]/.test(p) },
-  { key: 'upper',   label: 'One uppercase letter (A–Z)',  test: p => /[A-Z]/.test(p) },
-  { key: 'number',  label: 'One number (0–9)',            test: p => /[0-9]/.test(p) },
-  { key: 'special', label: 'One special character (!@#…)',test: p => /[!@#$%^&*()_+\-=[\]{};':"\\|<>?,./`~]/.test(p) },
-  { key: 'length',  label: 'At least 8 characters',      test: p => p.length >= 8 },
+  { key: 'lower',   label: 'One lowercase letter (a–z)',   test: p => /[a-z]/.test(p) },
+  { key: 'upper',   label: 'One uppercase letter (A–Z)',   test: p => /[A-Z]/.test(p) },
+  { key: 'number',  label: 'One number (0–9)',             test: p => /[0-9]/.test(p) },
+  { key: 'special', label: 'One special character (!@#…)', test: p => /[!@#$%^&*()_+\-=[\]{};':"\\|<>?,./`~]/.test(p) },
+  { key: 'length',  label: 'At least 8 characters',       test: p => p.length >= 8 },
 ]
 
 export default function AuthScreen({ onAuth }) {
-  const [mode, setMode]         = useState('login')
-  const [email, setEmail]       = useState('')
-  const [password, setPass]     = useState('')
-  const [showPass, setShowPass] = useState(false)
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState(null)
+  const [mode, setMode]           = useState('login')
+  const [email, setEmail]         = useState('')
+  const [password, setPass]       = useState('')
+  const [showPass, setShowPass]   = useState(false)
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState(null)
   const [pwFocused, setPwFocused] = useState(false)
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [resent, setResent]       = useState(false)
 
-  const checks = PASSWORD_RULES.map(r => ({ ...r, ok: r.test(password) }))
+  const checks    = PASSWORD_RULES.map(r => ({ ...r, ok: r.test(password) }))
   const allPassed = checks.every(c => c.ok)
 
+  // ── Listen for OAuth + email confirmation redirects ───────────────────
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
+        if (
+          (event === 'SIGNED_IN' || event === 'USER_UPDATED') &&
+          session?.user?.email_confirmed_at &&
+          session?.user
+        ) {
           const user = session.user
           const { data: profile } = await supabase
             .from('profiles').select('*').eq('id', user.id).single()
@@ -39,20 +47,47 @@ export default function AuthScreen({ onAuth }) {
     setLoading(true)
     setError(null)
     try {
-      let res
       if (mode === 'register') {
-        res = await supabase.auth.signUp({ email, password })
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: window.location.origin,
+          },
+        })
+        if (signUpError) throw signUpError
+
+        // Supabase returns a fake session even before confirmation
+        // Check if the user is already confirmed (shouldn't be on first signup)
+        if (data.user && !data.user.email_confirmed_at) {
+          // Show "check your email" screen
+          setAwaitingConfirm(true)
+        } else if (data.user && data.session) {
+          // Edge case: email confirmations disabled in Supabase settings
+          const { data: profile } = await supabase
+            .from('profiles').select('*').eq('id', data.user.id).single()
+          onAuth({ user: data.user, session: data.session, profile })
+        }
+
       } else {
-        res = await supabase.auth.signInWithPassword({ email, password })
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+        if (signInError) {
+          // Intercept "Email not confirmed" and show a helpful message
+          if (signInError.message?.toLowerCase().includes('email not confirmed')) {
+            setAwaitingConfirm(true)
+            return
+          }
+          throw signInError
+        }
+        const { data: profile } = await supabase
+          .from('profiles').select('*').eq('id', data.user.id).single()
+        onAuth({ user: data.user, session: data.session, profile })
       }
-      if (res.error) throw res.error
-      const user    = res.data.user
-      const session = res.data.session
-      const { data: profile } = await supabase
-        .from('profiles').select('*').eq('id', user.id).single()
-      onAuth({ user, session, profile })
+
     } catch (err) {
-      // Suppress the raw Supabase password policy error
       const msg = err.message || ''
       if (msg.toLowerCase().includes('password should contain')) {
         setError('Please make sure your password meets all the requirements below.')
@@ -61,6 +96,19 @@ export default function AuthScreen({ onAuth }) {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleResend = async () => {
+    setResending(true)
+    setResent(false)
+    try {
+      await supabase.auth.resend({ type: 'signup', email })
+      setResent(true)
+    } catch (e) {
+      console.error('Resend failed:', e)
+    } finally {
+      setResending(false)
     }
   }
 
@@ -73,16 +121,88 @@ export default function AuthScreen({ onAuth }) {
 
   const showRules = mode === 'register' && (pwFocused || password.length > 0)
 
+  // ── Check your email screen ───────────────────────────────────────────
+  if (awaitingConfirm) {
+    return (
+      <div style={{
+        minHeight: '100vh', width: '100%',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '24px 16px', boxSizing: 'border-box',
+      }}>
+        <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
+          <div style={{ fontSize: 52, lineHeight: 1 }}>✉️</div>
+
+          <div>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+              Check your email
+            </h2>
+            <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6 }}>
+              We sent a confirmation link to
+            </p>
+            <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
+              {email}
+            </p>
+          </div>
+
+          <div style={{
+            background: 'rgba(124,92,231,0.06)',
+            border: '1px solid rgba(124,92,231,0.15)',
+            borderRadius: 12, padding: '14px 16px',
+            fontSize: 13, color: 'var(--text3)', lineHeight: 1.7,
+            textAlign: 'left',
+          }}>
+            <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>What to do:</p>
+            <p style={{ margin: 0 }}>
+              1. Open the email from Ekko<br />
+              2. Click the <strong style={{ color: 'var(--purple-l)' }}>Confirm your email</strong> link<br />
+              3. Come back here and sign in
+            </p>
+          </div>
+
+          {resent && (
+            <p style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600, margin: 0 }}>
+              ✓ Confirmation email resent!
+            </p>
+          )}
+
+          <button
+            className="auth-cta"
+            onClick={handleResend}
+            disabled={resending}
+            style={{ opacity: resending ? 0.6 : 1 }}
+          >
+            {resending ? 'Sending…' : 'Resend confirmation email'}
+          </button>
+
+          <button
+            onClick={() => {
+              setAwaitingConfirm(false)
+              setMode('login')
+              setPass('')
+              setError(null)
+            }}
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--text3)', fontSize: 13,
+              cursor: 'pointer', fontFamily: 'inherit',
+              textDecoration: 'underline',
+            }}
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Normal login / register screen ────────────────────────────────────
   return (
     <div style={{
-      minHeight: '100vh',
-      width: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '24px 16px',
-      boxSizing: 'border-box',
+      minHeight: '100vh', width: '100%',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      padding: '24px 16px', boxSizing: 'border-box',
     }}>
       <div className="auth-logo">EKKO</div>
       <h1 className="auth-headline">
@@ -113,7 +233,7 @@ export default function AuthScreen({ onAuth }) {
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
         />
 
-        {/* Password field */}
+        {/* Password field with show/hide */}
         <div style={{ position: 'relative', width: '100%' }}>
           <input
             className="auth-input"
@@ -152,7 +272,7 @@ export default function AuthScreen({ onAuth }) {
           </button>
         </div>
 
-        {/* Password strength checklist — only on register when typing */}
+        {/* Password strength checklist */}
         {showRules && (
           <div style={{
             width: '100%',
@@ -160,24 +280,19 @@ export default function AuthScreen({ onAuth }) {
             border: '1px solid rgba(124,92,231,0.15)',
             borderRadius: '12px',
             padding: '12px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '7px',
+            display: 'flex', flexDirection: 'column', gap: '7px',
           }}>
             <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 700, color: '#8b7eb8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Password requirements
             </p>
             {checks.map(c => (
               <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {/* Animated checkbox */}
                 <div style={{
-                  width: '18px', height: '18px',
-                  borderRadius: '5px',
+                  width: '18px', height: '18px', borderRadius: '5px',
                   border: c.ok ? '2px solid #7c5ce7' : '2px solid #d4caf0',
                   background: c.ok ? '#7c5ce7' : 'transparent',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  flexShrink: 0,
-                  transition: 'all 0.2s ease',
+                  flexShrink: 0, transition: 'all 0.2s ease',
                 }}>
                   {c.ok && (
                     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
@@ -205,12 +320,17 @@ export default function AuthScreen({ onAuth }) {
           onClick={handleSubmit}
           disabled={loading || !email || !password || (mode === 'register' && !allPassed)}
         >
-          {loading ? 'Please wait...' : mode === 'login' ? 'Sign in' : 'Create account'}
+          {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
         </button>
 
         <p className="auth-toggle">
           {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <span onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); setPass(''); setPwFocused(false) }}>
+          <span onClick={() => {
+            setMode(mode === 'login' ? 'register' : 'login')
+            setError(null)
+            setPass('')
+            setPwFocused(false)
+          }}>
             {mode === 'login' ? 'Sign up' : 'Sign in'}
           </span>
         </p>

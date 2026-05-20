@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -29,11 +30,11 @@ const PLANS = [
     id: 'free',
     name: 'Free',
     icon: '🎧',
+    price: '$0',
+    period: 'forever',
     color: '#9ca3af',
     glow: '#9ca3af22',
     border: '#9ca3af44',
-    unlockLabel: 'Always free',
-    unlockCondition: () => true,
     features: [
       '5 songs per day',
       'All 7 cultural regions',
@@ -41,17 +42,16 @@ const PLANS = [
       'Basic artist styles',
       'Song history (last 20)',
     ],
-    locked: [],
   },
   {
     id: 'groove',
     name: 'Groove',
     icon: '🌊',
+    price: '$9',
+    period: '/ month',
     color: '#34d399',
     glow: '#34d39918',
     border: '#34d39966',
-    unlockLabel: 'Unlock: 7-day streak OR 100 XP',
-    unlockCondition: (xp, streak) => xp >= 100 || streak >= 7,
     features: [
       'Unlimited songs per day',
       'All artist styles unlocked',
@@ -59,17 +59,16 @@ const PLANS = [
       'Full song history',
       'Mood analytics dashboard',
     ],
-    locked: ['Requires 7-day streak or 100 XP'],
   },
   {
     id: 'studio',
     name: 'Studio',
     icon: '🎨',
+    price: '$19',
+    period: '/ month',
     color: '#f59e0b',
     glow: '#f59e0b18',
     border: '#f59e0b66',
-    unlockLabel: 'Unlock: 30-day streak OR 500 XP',
-    unlockCondition: (xp, streak) => xp >= 500 || streak >= 30,
     features: [
       'Everything in Groove',
       'Download songs as MP3',
@@ -78,7 +77,6 @@ const PLANS = [
       'Exclusive Maestro artists',
       'Monthly featured on Ekko',
     ],
-    locked: ['Requires 30-day streak or 500 XP'],
   },
 ]
 
@@ -114,7 +112,7 @@ function getNextRank(xp) {
 }
 
 function isBadgeEarned(badge, xp, streak, totalSongs) {
-  if (badge.special) return false // special badges shown as locked always for now
+  if (badge.special) return false
   if (badge.xpNeeded > 0 && xp < badge.xpNeeded) return false
   if (badge.streakNeeded > 0 && streak < badge.streakNeeded) return false
   if (badge.songsNeeded > 0 && totalSongs < badge.songsNeeded) return false
@@ -168,8 +166,6 @@ function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
           ))}
         </>
       )}
-
-      {/* Icon */}
       <div style={{
         width: 44, height: 44, borderRadius: 13, flexShrink: 0,
         background: earned ? 'rgba(168,85,247,.15)' : 'rgba(255,255,255,.05)',
@@ -181,8 +177,6 @@ function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
       }}>
         {badge.emoji}
       </div>
-
-      {/* Info */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{
           margin: '0 0 2px', fontSize: 14, fontWeight: 700,
@@ -193,8 +187,6 @@ function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
           {earned ? badge.desc : badge.how}
         </p>
       </div>
-
-      {/* Status */}
       {earned ? (
         <div style={{
           width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
@@ -207,69 +199,122 @@ function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
   )
 }
 
-function PlanCard({ plan, xp, streak, activePlan, onSelect }) {
-  const unlocked = plan.unlockCondition(xp, streak)
-  const isActive = activePlan === plan.id
+// ── PlanCard — now with real Stripe checkout ──────────────────────────────────
+function PlanCard({ plan, activePlan, userId, userEmail, onUpgradeStart }) {
+  const isActive  = activePlan === plan.id
+  const isFree    = plan.id === 'free'
+  const isCurrent = isActive
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(null)
+
+  const handleClick = async () => {
+    if (isFree || isCurrent || loading) return
+    setLoading(true)
+    setError(null)
+    onUpgradeStart?.()
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/create-checkout`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          email:   userEmail,
+          plan:    plan.id,
+        }),
+      })
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      } else {
+        setError(data.detail || 'Could not start checkout.')
+        setLoading(false)
+      }
+    } catch {
+      setError('Network error. Please try again.')
+      setLoading(false)
+    }
+  }
 
   return (
-    <div
-      onClick={() => unlocked && onSelect(plan.id)}
-      style={{
-        background: isActive
-          ? `linear-gradient(135deg, ${plan.glow}, rgba(255,255,255,.04))`
-          : unlocked ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.2)',
-        border: `1.5px solid ${isActive ? plan.color : unlocked ? plan.border : 'rgba(255,255,255,.06)'}`,
-        borderRadius: 20, padding: '18px 16px',
-        cursor: unlocked ? 'pointer' : 'default',
-        transition: 'all .25s',
-        position: 'relative', overflow: 'hidden',
-        boxShadow: isActive ? `0 0 24px ${plan.glow}` : 'none',
-        filter: unlocked ? 'none' : 'brightness(.6)',
-      }}
-    >
+    <div style={{
+      background: isActive
+        ? `linear-gradient(135deg, ${plan.glow}, rgba(255,255,255,.04))`
+        : 'rgba(255,255,255,.04)',
+      border: `1.5px solid ${isActive ? plan.color : plan.border}`,
+      borderRadius: 20, padding: '18px 16px',
+      position: 'relative', overflow: 'hidden',
+      boxShadow: isActive ? `0 0 24px ${plan.glow}` : 'none',
+      transition: 'all .25s',
+    }}>
+      {/* Active badge */}
       {isActive && (
         <div style={{
           position: 'absolute', top: 10, right: 12,
           fontSize: 10, fontWeight: 800, color: plan.color,
-          background: `${plan.glow}`,
-          padding: '3px 8px', borderRadius: 20,
-          border: `1px solid ${plan.border}`,
-          fontFamily: "'Syne', sans-serif",
-          letterSpacing: '.08em',
+          background: plan.glow, padding: '3px 8px',
+          borderRadius: 20, border: `1px solid ${plan.border}`,
+          fontFamily: "'Syne', sans-serif", letterSpacing: '.08em',
         }}>ACTIVE</div>
       )}
 
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <span style={{ fontSize: 26 }}>{plan.icon}</span>
-        <div>
+        <div style={{ flex: 1 }}>
           <p style={{
             margin: 0, fontSize: 17, fontWeight: 800,
-            color: unlocked ? plan.color : '#4b4570',
-            fontFamily: "'Syne', sans-serif",
+            color: plan.color, fontFamily: "'Syne', sans-serif",
           }}>{plan.name}</p>
-          <p style={{ margin: 0, fontSize: 10, color: '#6b5f8a', fontWeight: 600 }}>
-            {plan.unlockLabel}
-          </p>
+        </div>
+        {/* Price */}
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: '#f9fafb' }}>{plan.price}</span>
+          <span style={{ fontSize: 11, color: '#6b5f8a', marginLeft: 3 }}>{plan.period}</span>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Features */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
         {plan.features.map((f, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: unlocked ? plan.color : '#3a3455' }}>✓</span>
-            <span style={{ fontSize: 12, color: unlocked ? '#c4b5f0' : '#3a3455' }}>{f}</span>
+            <span style={{ fontSize: 12, color: plan.color }}>✓</span>
+            <span style={{ fontSize: 12, color: '#c4b5f0' }}>{f}</span>
           </div>
         ))}
       </div>
 
-      {!unlocked && (
-        <div style={{
-          marginTop: 12, padding: '8px 12px',
-          background: 'rgba(255,255,255,.04)', borderRadius: 10,
-          fontSize: 11, color: '#6b5f8a', textAlign: 'center',
-        }}>
-          🔒 {plan.locked[0]}
-        </div>
+      {/* Error */}
+      {error && (
+        <p style={{ margin: '0 0 10px', fontSize: 11, color: '#f87171', textAlign: 'center' }}>{error}</p>
+      )}
+
+      {/* CTA button */}
+      {!isFree && (
+        <button
+          onClick={handleClick}
+          disabled={isCurrent || loading}
+          style={{
+            width: '100%', padding: '12px',
+            borderRadius: 12, border: 'none',
+            background: isCurrent
+              ? 'rgba(255,255,255,.06)'
+              : loading
+                ? 'rgba(255,255,255,.1)'
+                : `linear-gradient(135deg, ${plan.color}cc, ${plan.color})`,
+            color: isCurrent ? '#6b7280' : '#fff',
+            fontSize: 14, fontWeight: 700,
+            cursor: isCurrent ? 'default' : loading ? 'wait' : 'pointer',
+            fontFamily: "'DM Sans', sans-serif",
+            transition: 'all .2s',
+            boxShadow: (!isCurrent && !loading) ? `0 4px 16px ${plan.glow}` : 'none',
+          }}
+        >
+          {loading
+            ? '↗ Redirecting to Stripe…'
+            : isCurrent
+              ? '✓ Current Plan'
+              : `Upgrade to ${plan.name}`}
+        </button>
       )}
     </div>
   )
@@ -278,15 +323,56 @@ function PlanCard({ plan, xp, streak, activePlan, onSelect }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function RewardsScreen({ xp = 0, userId = '' }) {
-  const [byRegion, setByRegion]     = useState({})
-  const [totalSongs, setTotalSongs] = useState(0)
-  const [moodLogs, setMoodLogs]     = useState([])
-  const [activeTab, setActiveTab]   = useState('progress')   // progress | badges | plans
-  const [activePlan, setActivePlan] = useState('free')
-  const [tooltip, setTooltip]       = useState(null)         // { badge, earned }
-  const [mounted, setMounted]       = useState(false)
+  const [byRegion, setByRegion]         = useState({})
+  const [totalSongs, setTotalSongs]     = useState(0)
+  const [moodLogs, setMoodLogs]         = useState([])
+  const [activeTab, setActiveTab]       = useState('progress')
+  const [activePlan, setActivePlan]     = useState('free')
+  const [tooltip, setTooltip]           = useState(null)
+  const [mounted, setMounted]           = useState(false)
+  const [userEmail, setUserEmail]       = useState('')
+  const [stripeLoading, setStripeLoading] = useState(false)
 
   useEffect(() => { setTimeout(() => setMounted(true), 50) }, [])
+
+  // ── Load user email for Stripe checkout ──────────────────
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user?.email) setUserEmail(user.email)
+    })
+  }, [])
+
+  // ── Load subscription status from backend ────────────────
+  useEffect(() => {
+    if (!userId) return
+    fetch(`${import.meta.env.VITE_API_URL}/stripe/status/${userId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'active' && data.plan) {
+          setActivePlan(data.plan)
+        }
+      })
+      .catch(() => {})
+  }, [userId])
+
+  // ── Handle ?payment=success return from Stripe ───────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('payment') === 'success') {
+      window.history.replaceState({}, '', window.location.pathname)
+      // Re-fetch subscription after short delay for webhook to process
+      setTimeout(() => {
+        if (userId) {
+          fetch(`${import.meta.env.VITE_API_URL}/stripe/status/${userId}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.status === 'active') setActivePlan(data.plan)
+            })
+            .catch(() => {})
+        }
+      }, 3000)
+    }
+  }, [userId])
 
   useEffect(() => {
     if (!userId) return
@@ -304,7 +390,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       .catch(() => {})
   }, [userId])
 
-  // ── Streak & calendar ─────────────────────────────────────────────────
+  // ── Streak & calendar ─────────────────────────────────────
   const logDates = new Set(moodLogs.map(l => new Date(l.created_at).toDateString()))
   const today    = new Date()
   const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1
@@ -323,23 +409,15 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
     else break
   }
 
-  // ── Rank & XP ────────────────────────────────────────────────────────
+  // ── Rank & XP ─────────────────────────────────────────────
   const rank     = getRank(xp)
   const nextRank = getNextRank(xp)
   const rankPct  = nextRank
     ? Math.min(100, Math.round(((xp - rank.min) / (nextRank.min - rank.min)) * 100))
     : 100
 
-  // ── Daily challenge (deterministic from date) ─────────────────────────
   const dayOfYear  = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000)
   const dailyChall = DAILY_CHALLENGES[dayOfYear % DAILY_CHALLENGES.length]
-
-  // ── Unlocked plan ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (xp >= 500 || streak >= 30) setActivePlan('studio')
-    else if (xp >= 100 || streak >= 7) setActivePlan('groove')
-    else setActivePlan('free')
-  }, [xp, streak])
 
   const earnedBadges = BADGES.filter(b => isBadgeEarned(b, xp, streak, totalSongs)).length
   const regions      = Object.keys(byRegion)
@@ -355,15 +433,13 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
 
       {/* ── Header ── */}
       <div style={{ textAlign: 'center', marginBottom: 24, position: 'relative' }}>
-        {/* Rank orb */}
         <div style={{
           width: 80, height: 80, borderRadius: '50%',
           background: `radial-gradient(circle at 40% 35%, ${rank.color}cc, ${rank.color}44)`,
           boxShadow: `0 0 32px ${rank.glow}, 0 0 64px ${rank.glow}`,
           margin: '0 auto 12px',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 36,
-          animation: 'rankFloat 3s ease-in-out infinite',
+          fontSize: 36, animation: 'rankFloat 3s ease-in-out infinite',
         }}>
           {rank.icon}
         </div>
@@ -391,17 +467,12 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
           <span style={{ fontSize: 11, color: '#6b5f8a', fontWeight: 700 }}>RANK PROGRESS</span>
           <span style={{ fontSize: 11, color: rank.color, fontWeight: 700 }}>{rankPct}%</span>
         </div>
-        <div style={{
-          height: 10, background: 'rgba(255,255,255,.07)',
-          borderRadius: 5, overflow: 'hidden',
-        }}>
+        <div style={{ height: 10, background: 'rgba(255,255,255,.07)', borderRadius: 5, overflow: 'hidden' }}>
           <div style={{
             height: '100%', width: `${rankPct}%`,
             background: `linear-gradient(90deg, ${rank.color}88, ${rank.color})`,
-            borderRadius: 5,
-            boxShadow: `0 0 10px ${rank.color}`,
-            transition: 'width 1s ease',
-            animation: 'shimmer 2s linear infinite',
+            borderRadius: 5, boxShadow: `0 0 10px ${rank.color}`,
+            transition: 'width 1s ease', animation: 'shimmer 2s linear infinite',
           }} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
@@ -420,8 +491,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       }}>
         <div style={{
           position: 'absolute', top: -20, right: -20,
-          width: 80, height: 80, borderRadius: '50%',
-          background: 'rgba(251,191,36,.06)',
+          width: 80, height: 80, borderRadius: '50%', background: 'rgba(251,191,36,.06)',
         }} />
         <div style={{
           width: 48, height: 48, borderRadius: 14, flexShrink: 0,
@@ -433,29 +503,22 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <span style={{
-              fontSize: 10, fontWeight: 800, color: '#fbbf24',
-              fontFamily: "'Syne', sans-serif", letterSpacing: '.08em',
-            }}>DAILY CHALLENGE</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: '#fbbf24', fontFamily: "'Syne', sans-serif", letterSpacing: '.08em' }}>DAILY CHALLENGE</span>
           </div>
-          <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 700, color: '#fde68a' }}>
-            {dailyChall.label}
-          </p>
+          <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 700, color: '#fde68a' }}>{dailyChall.label}</p>
           <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>{dailyChall.desc}</p>
         </div>
         <div style={{
           background: 'rgba(251,191,36,.15)', border: '1px solid rgba(251,191,36,.3)',
           borderRadius: 10, padding: '6px 12px', flexShrink: 0,
-          fontSize: 13, fontWeight: 800, color: '#fbbf24',
-          fontFamily: "'Syne', sans-serif",
+          fontSize: 13, fontWeight: 800, color: '#fbbf24', fontFamily: "'Syne', sans-serif",
         }}>+{dailyChall.xp} XP</div>
       </div>
 
       {/* ── Tabs ── */}
       <div style={{
         display: 'flex', gap: 6, marginBottom: 20,
-        background: 'rgba(255,255,255,.04)',
-        border: '1px solid rgba(255,255,255,.07)',
+        background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)',
         borderRadius: 14, padding: 4,
       }}>
         {[
@@ -481,41 +544,26 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       {/* ══════════════════ PROGRESS TAB ══════════════════ */}
       {activeTab === 'progress' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-          {/* Streak Calendar */}
           <Section label={`This week · ${streak > 0 ? `🔥 ${streak} day streak` : 'No streak yet'}`}>
             <div style={{ display: 'flex', gap: 6 }}>
               {days.map((d, i) => (
-                <div key={i} style={{
-                  flex: 1, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', gap: 6,
-                }}>
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                   <div style={{
-                    width: '100%', aspectRatio: '1',
-                    borderRadius: 10,
+                    width: '100%', aspectRatio: '1', borderRadius: 10,
                     background: d.today
                       ? 'linear-gradient(135deg, #7c5ce7, #a855f7)'
-                      : d.active
-                        ? 'rgba(124,92,231,.25)'
-                        : 'rgba(255,255,255,.04)',
+                      : d.active ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
                     border: `1.5px solid ${d.today ? '#a855f7' : d.active ? 'rgba(124,92,231,.4)' : 'rgba(255,255,255,.07)'}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 14,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
                     boxShadow: d.today ? '0 0 14px rgba(124,92,231,.5)' : 'none',
-                    opacity: d.future ? .3 : 1,
-                    transition: 'all .2s',
+                    opacity: d.future ? .3 : 1, transition: 'all .2s',
                   }}>
                     {d.active || d.today ? '✓' : ''}
                   </div>
-                  <span style={{
-                    fontSize: 10, fontWeight: 700,
-                    color: d.today ? '#a855f7' : '#4b4570',
-                  }}>{d.label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: d.today ? '#a855f7' : '#4b4570' }}>{d.label}</span>
                 </div>
               ))}
             </div>
-
-            {/* Streak tip */}
             <div style={{
               marginTop: 10, padding: '10px 14px',
               background: streak >= 3 ? 'rgba(168,85,247,.06)' : 'rgba(251,191,36,.06)',
@@ -524,15 +572,14 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
               color: streak >= 3 ? '#b09ee0' : '#92400e',
             }}>
               {streak === 0 && '💡 Check in today to start your streak!'}
-              {streak === 1 && '🌱 Day 1 — keep going tomorrow to build your streak!'}
+              {streak === 1 && '🌱 Day 1 — keep going tomorrow!'}
               {streak === 2 && '⚡ 2 days in a row! One more for the 🔥 badge!'}
-              {streak >= 3 && streak < 7 && `🔥 ${streak} days strong! ${7 - streak} more days for the ⚡ Electric badge!`}
-              {streak >= 7 && streak < 30 && `⚡ Incredible ${streak}-day streak! Groove plan unlocked. ${30 - streak} days for Studio!`}
-              {streak >= 30 && '🌙 Legendary! 30-day streak — Studio plan is yours!'}
+              {streak >= 3 && streak < 7  && `🔥 ${streak} days strong! ${7 - streak} more for ⚡ Electric badge!`}
+              {streak >= 7 && streak < 30 && `⚡ ${streak}-day streak! ${30 - streak} more days to Moonwalker!`}
+              {streak >= 30 && '🌙 Legendary! 30-day streak achieved!'}
             </div>
           </Section>
 
-          {/* Region Stats */}
           {regions.length > 0 && (
             <Section label={`Regions explored · ${regions.length} / ${Object.keys(REGION_META).length}`}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -545,54 +592,35 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#c4b5f0', width: 110, flexShrink: 0 }}>
                         {m.emoji} {m.label}
                       </span>
-                      <div style={{
-                        flex: 1, height: 7,
-                        background: 'rgba(255,255,255,.07)', borderRadius: 4, overflow: 'hidden',
-                      }}>
-                        <div style={{
-                          height: '100%', width: `${pct}%`,
-                          background: m.color, borderRadius: 4,
-                          boxShadow: `0 0 6px ${m.color}88`,
-                          transition: 'width .8s ease',
-                        }} />
+                      <div style={{ flex: 1, height: 7, background: 'rgba(255,255,255,.07)', borderRadius: 4, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: m.color, borderRadius: 4, boxShadow: `0 0 6px ${m.color}88`, transition: 'width .8s ease' }} />
                       </div>
-                      <span style={{ fontSize: 12, color: '#6b5f8a', fontWeight: 700, width: 24, textAlign: 'right' }}>
-                        {cnt}
-                      </span>
+                      <span style={{ fontSize: 12, color: '#6b5f8a', fontWeight: 700, width: 24, textAlign: 'right' }}>{cnt}</span>
                     </div>
                   )
                 })}
               </div>
-              {regions.length < Object.keys(REGION_META).length && (
-                <p style={{ margin: '10px 0 0', fontSize: 12, color: '#6b5f8a' }}>
-                  🗺️ {Object.keys(REGION_META).length - regions.length} more region{Object.keys(REGION_META).length - regions.length !== 1 ? 's' : ''} to explore
-                </p>
-              )}
             </Section>
           )}
 
-          {/* Stats grid */}
           <Section label="Stats">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
-                { label: 'Total XP',     value: xp,          icon: '⚡', color: '#a855f7' },
-                { label: 'Songs made',   value: totalSongs,  icon: '🎵', color: '#34d399' },
-                { label: 'Day streak',   value: streak,      icon: '🔥', color: '#f59e0b' },
-                { label: 'Badges',       value: `${earnedBadges}/${BADGES.length}`, icon: '🏅', color: '#60a5fa' },
+                { label: 'Total XP',   value: xp,         icon: '⚡', color: '#a855f7' },
+                { label: 'Songs made', value: totalSongs, icon: '🎵', color: '#34d399' },
+                { label: 'Day streak', value: streak,     icon: '🔥', color: '#f59e0b' },
+                { label: 'Badges',     value: `${earnedBadges}/${BADGES.length}`, icon: '🏅', color: '#60a5fa' },
               ].map(stat => (
                 <div key={stat.label} style={{
-                  background: 'rgba(255,255,255,.04)',
-                  border: '1px solid rgba(255,255,255,.07)',
+                  background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)',
                   borderRadius: 14, padding: '14px 16px',
                 }}>
                   <p style={{ margin: '0 0 6px', fontSize: 11, color: '#6b5f8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em' }}>
                     {stat.icon} {stat.label}
                   </p>
-                  <p style={{
-                    margin: 0, fontSize: 28, fontWeight: 800,
-                    color: stat.color, fontFamily: "'Syne', sans-serif",
-                    textShadow: `0 0 16px ${stat.color}66`,
-                  }}>{stat.value}</p>
+                  <p style={{ margin: 0, fontSize: 28, fontWeight: 800, color: stat.color, fontFamily: "'Syne', sans-serif", textShadow: `0 0 16px ${stat.color}66` }}>
+                    {stat.value}
+                  </p>
                 </div>
               ))}
             </div>
@@ -608,10 +636,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
           </p>
           {BADGES.map(badge => (
             <BadgeCard
-              key={badge.id}
-              badge={badge}
-              xp={xp}
-              streak={streak}
+              key={badge.id} badge={badge} xp={xp} streak={streak}
               totalSongs={totalSongs}
               onTap={(b, earned) => setTooltip({ badge: b, earned })}
             />
@@ -622,111 +647,116 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       {/* ══════════════════ PLANS TAB ══════════════════ */}
       {activeTab === 'plans' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+          {/* Success banner */}
+          {new URLSearchParams(window.location.search).get('payment') === 'success' && (
+            <div style={{
+              background: 'rgba(52,211,153,.12)', border: '1px solid rgba(52,211,153,.35)',
+              borderRadius: 12, padding: '12px 16px',
+              color: '#6ee7b7', fontSize: 13, textAlign: 'center',
+            }}>
+              🎉 Payment successful! Your plan is now active.
+            </div>
+          )}
+
+          {/* Current plan indicator */}
+          {activePlan !== 'free' && (
+            <div style={{
+              background: 'rgba(124,92,231,.1)', border: '1px solid rgba(124,92,231,.3)',
+              borderRadius: 12, padding: '10px 16px',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span style={{ fontSize: 13, color: '#c4b5f0' }}>
+                ✅ You're on <strong style={{ color: '#a855f7' }}>{activePlan.charAt(0).toUpperCase() + activePlan.slice(1)}</strong>
+              </span>
+              <button
+                onClick={async () => {
+                  setStripeLoading(true)
+                  try {
+                    const res  = await fetch(`${import.meta.env.VITE_API_URL}/stripe/create-portal`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ user_id: userId }),
+                    })
+                    const data = await res.json()
+                    if (data.url) window.location.href = data.url
+                  } catch { /* ignore */ }
+                  setStripeLoading(false)
+                }}
+                style={{
+                  background: 'transparent', border: '1px solid rgba(168,85,247,.4)',
+                  borderRadius: 8, padding: '5px 12px',
+                  color: '#a855f7', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                {stripeLoading ? '…' : 'Manage billing →'}
+              </button>
+            </div>
+          )}
+
           <p style={{ margin: '0 0 4px', fontSize: 12, color: '#6b5f8a' }}>
-            Unlock premium plans by earning XP or keeping a streak — no payment needed.
+            Upgrade to unlock more generations and features.
           </p>
+
           {PLANS.map(plan => (
             <PlanCard
               key={plan.id}
               plan={plan}
-              xp={xp}
-              streak={streak}
               activePlan={activePlan}
-              onSelect={setActivePlan}
+              userId={userId}
+              userEmail={userEmail}
+              onUpgradeStart={() => setStripeLoading(true)}
             />
           ))}
 
-          {/* Progress toward next plan */}
-          {activePlan !== 'studio' && (
-            <div style={{
-              marginTop: 8, padding: '14px 16px',
-              background: 'rgba(52,211,153,.06)', border: '1px solid rgba(52,211,153,.2)',
-              borderRadius: 14,
-            }}>
-              <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#34d399' }}>
-                🎯 How to unlock {activePlan === 'free' ? 'Groove' : 'Studio'}
-              </p>
-              {activePlan === 'free' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <ProgressMini label="XP" current={xp} target={100} color="#a855f7" />
-                  <ProgressMini label="Streak" current={streak} target={7} color="#f59e0b" suffix=" days" />
-                  <p style={{ margin: 0, fontSize: 11, color: '#6b5f8a' }}>Reach either goal to unlock Groove</p>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <ProgressMini label="XP" current={xp} target={500} color="#a855f7" />
-                  <ProgressMini label="Streak" current={streak} target={30} color="#f59e0b" suffix=" days" />
-                  <p style={{ margin: 0, fontSize: 11, color: '#6b5f8a' }}>Reach either goal to unlock Studio</p>
-                </div>
-              )}
-            </div>
-          )}
+          <p style={{ textAlign: 'center', color: '#4b4570', fontSize: 11, marginTop: 4 }}>
+            Payments by Stripe · Cancel anytime · No hidden fees
+          </p>
         </div>
       )}
 
       {/* ── Badge tooltip modal ── */}
       {tooltip && (
-        <div
-          onClick={() => setTooltip(null)}
-          style={{
-            position: 'fixed', inset: 0,
-            background: 'rgba(0,0,0,.7)', backdropFilter: 'blur(6px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000, padding: 24,
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: 'linear-gradient(135deg, #1a1040, #2d1b69)',
-              border: `1.5px solid ${tooltip.earned ? 'rgba(168,85,247,.5)' : 'rgba(255,255,255,.1)'}`,
-              borderRadius: 24, padding: '28px 24px',
-              maxWidth: 320, width: '100%',
-              boxShadow: tooltip.earned ? '0 0 40px rgba(168,85,247,.3)' : '0 20px 60px rgba(0,0,0,.5)',
-              textAlign: 'center',
-              animation: 'modalPop .25s ease',
-            }}
-          >
+        <div onClick={() => setTooltip(null)} style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,.7)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: 24,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'linear-gradient(135deg, #1a1040, #2d1b69)',
+            border: `1.5px solid ${tooltip.earned ? 'rgba(168,85,247,.5)' : 'rgba(255,255,255,.1)'}`,
+            borderRadius: 24, padding: '28px 24px',
+            maxWidth: 320, width: '100%',
+            boxShadow: tooltip.earned ? '0 0 40px rgba(168,85,247,.3)' : '0 20px 60px rgba(0,0,0,.5)',
+            textAlign: 'center', animation: 'modalPop .25s ease',
+          }}>
             <div style={{ fontSize: 52, marginBottom: 12,
               filter: tooltip.earned ? 'none' : 'grayscale(1) brightness(.5)',
               animation: tooltip.earned ? 'badgeBounce .5s ease' : 'none',
             }}>
               {tooltip.badge.emoji}
             </div>
-            <p style={{
-              margin: '0 0 6px', fontSize: 20, fontWeight: 800,
-              color: tooltip.earned ? '#e0d8ff' : '#6b5f8a',
-              fontFamily: "'Syne', sans-serif",
-            }}>{tooltip.badge.label}</p>
+            <p style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: tooltip.earned ? '#e0d8ff' : '#6b5f8a', fontFamily: "'Syne', sans-serif" }}>
+              {tooltip.badge.label}
+            </p>
             <p style={{ margin: '0 0 20px', fontSize: 14, color: '#8b7eb8', lineHeight: 1.6 }}>
               {tooltip.earned ? tooltip.badge.desc : tooltip.badge.how}
             </p>
             {tooltip.earned ? (
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                background: 'rgba(168,85,247,.15)', border: '1px solid rgba(168,85,247,.4)',
-                borderRadius: 20, padding: '8px 18px',
-                fontSize: 13, fontWeight: 700, color: '#a855f7',
-              }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(168,85,247,.15)', border: '1px solid rgba(168,85,247,.4)', borderRadius: 20, padding: '8px 18px', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>
                 ✨ Badge earned!
               </div>
             ) : (
-              <div style={{
-                background: 'rgba(255,255,255,.04)', borderRadius: 14, padding: '12px 16px',
-                fontSize: 13, color: '#6b5f8a',
-              }}>
+              <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 14, padding: '12px 16px', fontSize: 13, color: '#6b5f8a' }}>
                 🔒 Keep going — you've got this!
               </div>
             )}
-            <button
-              onClick={() => setTooltip(null)}
-              style={{
-                display: 'block', width: '100%', marginTop: 16,
-                background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)',
-                borderRadius: 12, padding: '10px', color: '#8b7eb8',
-                fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-              }}
-            >Close</button>
+            <button onClick={() => setTooltip(null)} style={{
+              display: 'block', width: '100%', marginTop: 16,
+              background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)',
+              borderRadius: 12, padding: '10px', color: '#8b7eb8',
+              fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+            }}>Close</button>
           </div>
         </div>
       )}
@@ -741,11 +771,9 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
 function Section({ label, children }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <p style={{
-        margin: 0, fontSize: 11, fontWeight: 700, color: '#6b5f8a',
-        textTransform: 'uppercase', letterSpacing: '.07em',
-        fontFamily: "'Syne', sans-serif",
-      }}>{label}</p>
+      <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: '#6b5f8a', textTransform: 'uppercase', letterSpacing: '.07em', fontFamily: "'Syne', sans-serif" }}>
+        {label}
+      </p>
       {children}
     </div>
   )
@@ -757,22 +785,14 @@ function ProgressMini({ label, current, target, color, suffix = '' }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
         <span style={{ fontSize: 11, color: '#8b7eb8' }}>{label}</span>
-        <span style={{ fontSize: 11, color, fontWeight: 700 }}>
-          {current}{suffix} / {target}{suffix}
-        </span>
+        <span style={{ fontSize: 11, color, fontWeight: 700 }}>{current}{suffix} / {target}{suffix}</span>
       </div>
       <div style={{ height: 6, background: 'rgba(255,255,255,.07)', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${pct}%`, background: color,
-          borderRadius: 3, boxShadow: `0 0 6px ${color}`,
-          transition: 'width .8s ease',
-        }} />
+        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, boxShadow: `0 0 6px ${color}`, transition: 'width .8s ease' }} />
       </div>
     </div>
   )
 }
-
-// ── CSS ───────────────────────────────────────────────────────────────────────
 
 const CSS = `
   @keyframes rankFloat {
@@ -784,7 +804,7 @@ const CSS = `
     100% { background-position:  200% center; }
   }
   @keyframes particleBurst {
-    0%   { transform: scale(1) translate(0,0);       opacity: 1; }
+    0%   { transform: scale(1) translate(0,0); opacity: 1; }
     100% { transform: scale(0) translate(var(--tx, 20px), var(--ty, -30px)); opacity: 0; }
   }
   @keyframes modalPop {

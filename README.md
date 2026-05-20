@@ -1,174 +1,227 @@
-# Ekko: Musical Mood Journeys
-**A Gamified, Multi-Modal, and Culturally Sensitive Music Experience**
+# 🎵 Ekko — Musical Mood Journeys
 
-Bachelor Thesis — Media Engineering and Technology Faculty, German University in Cairo  
-Author: Shahd Mostafa Abdelrahman Mohamed Attia  
-Supervisor: Dr. Nada Sharaf
+> A gamified, multi-modal, culturally sensitive AI music experience.  
+> Share your mood → get a full AI-generated song in your cultural style → earn rewards.
 
----
-
-## Why `localhost:8000/docs` wasn't working
-
-The FastAPI server was not running. This project requires two separate processes:
-
-| Process | Command | URL |
-|---|---|---|
-| Backend (FastAPI) | `uvicorn main:app --reload` | ${import.meta.env.VITE_API_URL}/docs |
-| Frontend (React/Vite) | `npm run dev` | http://localhost:5173 |
-
-Follow the steps below to get both running.
+**Author:** Shahd Mostafa Abdelrahman Mohamed Attia  
+**Stack:** FastAPI · React (Vite) · Supabase · Sonauto · Stripe · Render · Vercel
 
 ---
 
-## Five-Layer Architecture
+## ✨ Features
+
+- 🎭 **Mood Engine** — text, voice, or quiz input analyzed by Gemini
+- 🌍 **7 Cultural Regions** — Arabic, West Africa, India, East Asia, Latin, Europe, Global
+- 🎤 **Artist Style Selection** — 80+ artists across all regions
+- 🎵 **AI Music Generation** — full songs via Sonauto API with region-specific vocals
+- ✍️ **AI Lyrics** — written in your language/dialect via OpenRouter (Gemini / LLaMA)
+- 🏆 **Rewards & Streaks** — XP, badges, daily check-ins, rank progression
+- 📜 **Song History** — all generated songs saved per user, persist across sign-out
+- 💳 **Stripe Billing** — Groove ($9/mo) and Studio ($19/mo) paid plans
+- 📧 **Receipt Emails** — automatic payment receipts via Resend
+- 🔐 **Auth** — Supabase Auth (email + Google OAuth)
+
+---
+
+## 🗂 Project Structure
 
 ```
-Layer 1  Multi-Modal Input     Voice / Text / Quiz  →  React MoodInput.jsx
-Layer 2  Mood Engine           Whisper + librosa + HuggingFace  →  POST /mood/detect
-Layer 3  Cultural Filter       cultural_profiles table  →  POST /music/generate
-Layer 4  AI Co-Creation        Anthropic Claude API + Tone.js  →  MusicPlayer.jsx
-Layer 5  Reward & History      Supabase mood_logs + user_rewards  →  RewardPanel.jsx
+EKKO/
+├── backend/                          # FastAPI backend (Python)
+│   ├── routers/
+│   │   ├── auth.py                   # Auth helpers
+│   │   ├── mood.py                   # Layer 2: Mood engine (Gemini)
+│   │   ├── music.py                  # Layer 3+4: Cultural filter + Sonauto generation
+│   │   ├── rewards.py                # Layer 5: XP, streaks, badges, history
+│   │   └── stripe_router.py          # Layer 6: Stripe billing + receipt emails
+│   ├── venv/                         # Python virtual environment
+│   ├── .env                          # Environment variables (never commit)
+│   ├── keepalive.py                  # Render keep-alive pinger
+│   ├── main.py                       # FastAPI app entry point
+│   └── requirements.txt              # Python dependencies
+│
+├── frontend/                         # React + Vite frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── components/
+│   │   │   ├── AdminDashboard.jsx    # Admin panel
+│   │   │   ├── AuthScreen.jsx        # Login / signup
+│   │   │   ├── BackButton.jsx        # Navigation helper
+│   │   │   ├── CoCreation.jsx        # Music co-creation UI
+│   │   │   ├── LanguagePicker.jsx    # Language/dialect selector
+│   │   │   ├── MoodInput.jsx         # Mood entry (text/voice/quiz)
+│   │   │   ├── MusicPlayer.jsx       # Audio player + save + lyrics
+│   │   │   ├── Onboarding.jsx        # First-run onboarding
+│   │   │   ├── PlansScreen.jsx       # Stripe plans (Free/Groove/Studio)
+│   │   │   ├── RewardBadge.jsx       # Badge display component
+│   │   │   ├── RewardsScreen.jsx     # Full rewards/XP/streak screen
+│   │   │   └── SongHistory.jsx       # Persistent song history per user
+│   │   ├── lib/
+│   │   │   └── supabase.js           # Supabase client
+│   │   ├── utils/
+│   │   │   └── musicUtils.js         # Shared music helpers
+│   │   ├── App.css
+│   │   ├── App.jsx                   # Main app + routing + tab logic
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── .env                          # Frontend env vars (never commit)
+│   ├── index.html
+│   ├── package.json
+│   └── eslint.config.js
+│
+└── docs/                             # Documentation
 ```
 
 ---
 
-## Project Structure
+## 🗄 Supabase Schema
 
-```
-ekko/
-├── backend/
-│   ├── main.py                  ← FastAPI app entry point
-│   ├── requirements.txt
-│   ├── .env.example             ← Copy to .env and fill in keys
-│   ├── supabase_schema.sql      ← Run this in Supabase SQL Editor
-│   └── routers/
-│       ├── mood.py              ← Layer 2: POST /mood/detect
-│       ├── music.py             ← Layer 3+4: POST /music/generate, /music/iterate
-│       └── rewards.py           ← Layer 5: POST /rewards/checkin, GET /rewards/{id}
-└── frontend/
-    └── src/
-        ├── App.jsx              ← All 5 screens wired together
-        └── components/
-            ├── MoodInput.jsx    ← Layer 1: voice / text / quiz
-            ├── MusicPlayer.jsx  ← Layer 4: Tone.js playback + co-creation
-            └── RewardPanel.jsx  ← Layer 5: points, streaks, badges
-```
+| Table | Purpose |
+|---|---|
+| `profiles` | User profiles — `id`, `email`, `full_name`, `xp`, `plan` |
+| `songs` | All generated songs — audio URL, lyrics, mood, region, artist |
+| `user_rewards` | XP, streak, badges, last check-in per user |
+| `xp_events` | Idempotent XP log — prevents double-awarding |
+| `stripe_subscriptions` | Stripe plan, status, period end per user |
+| `mood_logs` | Mood session history |
+| `mood_sessions` | Active mood sessions |
+| `cultural_profiles` | User's cultural preferences |
 
 ---
 
-## Step-by-Step Setup
+## 💳 Stripe Plans
 
-### Step 1 — Supabase (database + auth)
+| Plan | Price | Generations | Features |
+|---|---|---|---|
+| **Free** | $0 | 5/day | Basic moods, last 10 songs |
+| **Groove** | $9/mo | 50/day | All regions, HD audio, full history, artist styles |
+| **Studio** | $19/mo | Unlimited | Everything + commercial license + API access |
 
-1. Go to [supabase.com](https://supabase.com) → New Project
-2. In **SQL Editor**, paste the contents of `backend/supabase_schema.sql` and run it.
-   This creates:
-   - `cultural_profiles` table (Layer 3) with 4 regions pre-seeded
-   - `mood_logs` table (Layer 5)
-   - `user_rewards` table (Layer 5)
-   - Row-level security policies
-3. Go to **Settings → API** and copy:
-   - **Project URL** → `SUPABASE_URL`
-   - **anon/public key** → `SUPABASE_KEY`
+### Stripe Webhook Events Handled
+- `checkout.session.completed` → activate subscription
+- `customer.subscription.updated` → sync plan changes
+- `customer.subscription.deleted` → downgrade to free
+- `invoice.payment_succeeded` → send receipt email
+- `invoice.payment_failed` → mark as past_due
+- `invoice.payment_action_required` → mark as past_due (3D Secure)
 
-### Step 2 — Anthropic API key
+---
 
-1. Go to [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key
-2. Copy it → `ANTHROPIC_API_KEY`
+## ⚙️ Environment Variables
 
-### Step 3 — Backend `.env` file
-
-```bash
-cd backend
-cp .env.example .env
-```
-
-Edit `backend/.env`:
-
+### Backend (`backend/.env`)
 ```env
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=eyJyour-anon-key-here
+SUPABASE_KEY=your-service-role-key
+
+# Stripe
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_GROOVE_PRICE_ID=price_...
+STRIPE_STUDIO_PRICE_ID=price_...
+FRONTEND_URL=https://your-app.vercel.app
+
+# AI APIs
+SONAUTO_API_KEY=...
+OPENROUTER_API_KEY=...
+
+# Email receipts (optional — Stripe sends basic receipts without this)
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=Ekko <receipts@yourdomain.com>
+
+# Render
+RENDER_EXTERNAL_URL=https://ekko-s8pl.onrender.com
 ```
 
-### Step 4 — Install and run the backend
+### Frontend (`frontend/.env`)
+```env
+VITE_API_URL=https://ekko-s8pl.onrender.com
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
 
+---
+
+## 🚀 Running Locally
+
+### Backend
 ```bash
 cd backend
-
-# Install dependencies (first time takes ~5 minutes due to torch + whisper)
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Start the server
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --port 8000
 ```
 
-✅ You should now see:
-```
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Application startup complete.
-```
-
-Open **${import.meta.env.VITE_API_URL}/docs** → Swagger UI with all endpoints.
-
-### Step 5 — Install and run the frontend
-
+### Frontend
 ```bash
 cd frontend
-
-# Install Node packages (including Tone.js)
 npm install
-
-# Start Vite dev server
 npm run dev
 ```
 
-Open **http://localhost:5173** → Ekko UI.
-
 ---
 
-## Testing Each Layer Without the Frontend
+## 🌐 Deployment
 
-Use the Swagger UI at `${import.meta.env.VITE_API_URL}/docs`:
-
-### Layer 2 — Test mood detection
-- `POST /mood/detect`
-- Upload any `.wav` file (record yourself speaking)
-- Expected response: `{ "transcript": "...", "top_emotion": "joy", "valence": 0.6, "arousal": 0.5, ... }`
-
-### Layer 3+4 — Test music generation
-- `POST /music/generate`
-- Body: `{ "valence": 0.6, "arousal": 0.7, "region": "Middle East" }`
-- Expected: JSON params with `tempo_bpm`, `scale`, `tone_js_notes`, etc.
-
-### Layer 5 — Test rewards
-- `POST /rewards/checkin` with `{ "user_id": "test-user-1" }`
-- Expected: `{ "points": 10, "streak": 1, "badges": ["first_checkin"] }`
-
----
-
-## Available API Endpoints
-
-| Method | Path | Description |
+| Service | Platform | URL |
 |---|---|---|
-| GET | `/` | Project overview |
-| GET | `/health` | Health check |
-| POST | `/mood/detect` | Layer 2: detect mood from audio |
-| GET | `/mood/history/{user_id}` | Layer 5: mood calendar data |
-| GET | `/music/regions` | List cultural regions |
-| POST | `/music/generate` | Layers 3+4: generate music params |
-| POST | `/music/iterate` | Layer 4: real-time co-creation adjustment |
-| POST | `/rewards/checkin` | Layer 5: daily check-in |
-| GET | `/rewards/{user_id}` | Layer 5: get reward state |
+| Backend | Render | https://ekko-s8pl.onrender.com |
+| Frontend | Vercel | your Vercel URL |
+| Database | Supabase | your Supabase project |
+| Payments | Stripe | dashboard.stripe.com |
+
+### Deploy backend to Render
+1. Push to GitHub
+2. Render auto-deploys on push
+3. Set all env vars in Render → Environment tab
+
+### Deploy frontend to Vercel
+1. Push to GitHub
+2. Vercel auto-deploys on push
+3. Set `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in Vercel env vars
 
 ---
 
-## Notes on Heavy Dependencies
+## 📧 Receipt Emails (Optional)
 
-`openai-whisper`, `torch`, and `torchaudio` are large packages (~2 GB total). 
-The first `pip install` will take several minutes. The Whisper model loads lazily
-on the first `/mood/detect` call (not on startup), so the server starts immediately.
+To send custom branded receipt emails:
+1. Create a free account at [resend.com](https://resend.com)
+2. Add your domain or use their sandbox domain for testing
+3. Copy your API key → add as `RESEND_API_KEY` in Render env vars
+4. Set `RESEND_FROM_EMAIL` to your verified sender
 
-If you want to test the server quickly without the ML stack, comment out the Whisper/
-librosa calls in `routers/mood.py` and return a hardcoded response — the music generation
-and rewards endpoints work independently.
+Without this, Stripe automatically sends basic receipt emails to customers.
+
+---
+
+## 🎮 Reward System
+
+| Action | XP |
+|---|---|
+| Daily check-in | +10 |
+| Share a mood | +10 |
+| Generate a song | +20 |
+| Select a region | +5 |
+
+| Rank | XP Required |
+|---|---|
+| 🎧 Listener | 0 |
+| 🌊 Vibe Seeker | 50 |
+| 🔥 On Fire | 200 |
+| ⭐ Star | 500 |
+| 💎 Diamond | 1000 |
+| 🏆 Ekko Legend | 2500 |
+
+---
+
+## 🧪 Testing Stripe Payments
+
+Use Stripe test cards:
+- **Success:** `4242 4242 4242 4242`
+- **Requires auth:** `4000 0025 0000 3155`
+- **Declined:** `4000 0000 0000 9995`
+
+Expiry: any future date · CVC: any 3 digits · ZIP: any 5 digits

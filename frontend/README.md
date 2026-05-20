@@ -1,247 +1,157 @@
 # 🎵 Ekko — Musical Mood Journeys
 
-> *Share how you feel. Get a song made for you, in your language, from your culture.*
+> A gamified, multi-modal, culturally sensitive AI music experience.  
+> Share your mood → get a full AI-generated song in your cultural style → earn rewards.
 
-Ekko is a mood-to-music app built for teenagers. You speak, type, or answer a quiz about how you're feeling — Ekko detects your emotion, writes lyrics in your chosen language and dialect, and generates a full culturally-rooted song using AI.
-
----
-
-## What It Does
-
-1. **You share your mood** — via voice (any language), typed text, or an emoji quiz
-2. **Ekko detects your emotion** — using Gemini audio + text analysis with acoustic fusion
-3. **You pick your musical culture** — Arabic, West Africa, India, East Asia, Latin, Europe, or Global
-4. **You pick your language** — Egyptian Arabic, Nigerian Pidgin, Hindi, Yoruba, Mandarin, and more
-5. **Ekko writes lyrics** in your dialect and generates a full song via Sonauto AI
-6. **Your songs are saved** to your history dashboard with playback, lyrics, and mood stats
-7. **You earn XP and badges** for every mood shared and song created
+**Author:** Shahd Mostafa Abdelrahman Mohamed Attia  
+**Stack:** FastAPI · React (Vite) · Supabase · Sonauto · Stripe · Render · Vercel
 
 ---
 
-## Tech Stack
+## ✨ Features
 
-### Frontend
-| Tool | Purpose |
-|------|---------|
-| React + Vite | UI framework |
-| Supabase JS client | Auth + real-time data |
-| Custom CSS (no UI lib) | All styling hand-written |
-
-### Backend
-| Tool | Purpose |
-|------|---------|
-| FastAPI (Python) | REST API server |
-| Supabase (Postgres + RLS) | Database + auth |
-| OpenRouter | LLM routing (Gemini, Llama, Mistral) |
-| Sonauto AI | Music generation from lyrics + style prompt |
-| librosa | Acoustic feature extraction from audio |
-| HuggingFace Transformers | Fallback emotion classifier |
+- 🎭 **Mood Engine** — text, voice, or quiz input analyzed by Gemini
+- 🌍 **7 Cultural Regions** — Arabic, West Africa, India, East Asia, Latin, Europe, Global
+- 🎤 **Artist Style Selection** — 80+ artists across all regions
+- 🎵 **AI Music Generation** — full songs via Sonauto API with region-specific vocals
+- ✍️ **AI Lyrics** — written in your language/dialect via OpenRouter (Gemini / LLaMA)
+- 🏆 **Rewards & Streaks** — XP, badges, daily check-ins, rank progression
+- 📜 **Song History** — all generated songs saved per user, persist across sign-out
+- 💳 **Stripe Billing** — Groove ($9/mo) and Studio ($19/mo) paid plans
+- 📧 **Receipt Emails** — automatic payment receipts via Resend
+- 🔐 **Auth** — Supabase Auth (email + Google OAuth)
 
 ---
 
-## Project Structure
+## 🗂 Project Structure
 
 ```
-ekko/
-├── frontend/                   # React + Vite app
-│   └── src/
-│       ├── App.jsx             # Main router + state, screen flow
-│       ├── lib/
-│       │   └── supabase.js     # Supabase client init
-│       └── components/
-│           ├── AuthScreen.jsx      # Sign in / sign up
-│           ├── Onboarding.jsx      # Region picker (7 cultures)
-│           ├── LanguagePicker.jsx  # Language picker per region
-│           ├── MoodInput.jsx       # Voice / Text / Quiz mood tabs
-│           ├── CoCreation.jsx      # Tempo, scale, instrument tuning
-│           ├── MusicPlayer.jsx     # Audio player + lyrics display
-│           ├── SongHistory.jsx     # Songs dashboard with playback
-│           ├── RewardsScreen.jsx   # XP, badges, streak calendar
-│           ├── RewardBadge.jsx     # Toast badge pop-up
-│           └── BackButton.jsx      # Shared back navigation
+EKKO/
+├── backend/                          # FastAPI backend (Python)
+│   ├── routers/
+│   │   ├── auth.py                   # Auth helpers
+│   │   ├── mood.py                   # Layer 2: Mood engine (Gemini)
+│   │   ├── music.py                  # Layer 3+4: Cultural filter + Sonauto generation
+│   │   ├── rewards.py                # Layer 5: XP, streaks, badges, history
+│   │   └── stripe_router.py          # Layer 6: Stripe billing + receipt emails
+│   ├── venv/                         # Python virtual environment
+│   ├── .env                          # Environment variables (never commit)
+│   ├── keepalive.py                  # Render keep-alive pinger
+│   ├── main.py                       # FastAPI app entry point
+│   └── requirements.txt              # Python dependencies
 │
-└── backend/                    # FastAPI server
-    ├── main.py                 # App entry point, router mount
-    ├── .env                    # API keys (never commit)
-    └── routers/
-        ├── mood.py             # Layer 2 — Mood Engine
-        └── music.py            # Layer 3+4 — Music Generation
+├── frontend/                         # React + Vite frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── components/
+│   │   │   ├── AdminDashboard.jsx    # Admin panel
+│   │   │   ├── AuthScreen.jsx        # Login / signup
+│   │   │   ├── BackButton.jsx        # Navigation helper
+│   │   │   ├── CoCreation.jsx        # Music co-creation UI
+│   │   │   ├── LanguagePicker.jsx    # Language/dialect selector
+│   │   │   ├── MoodInput.jsx         # Mood entry (text/voice/quiz)
+│   │   │   ├── MusicPlayer.jsx       # Audio player + save + lyrics
+│   │   │   ├── Onboarding.jsx        # First-run onboarding
+│   │   │   ├── PlansScreen.jsx       # Stripe plans (Free/Groove/Studio)
+│   │   │   ├── RewardBadge.jsx       # Badge display component
+│   │   │   ├── RewardsScreen.jsx     # Full rewards/XP/streak screen
+│   │   │   └── SongHistory.jsx       # Persistent song history per user
+│   │   ├── lib/
+│   │   │   └── supabase.js           # Supabase client
+│   │   ├── utils/
+│   │   │   └── musicUtils.js         # Shared music helpers
+│   │   ├── App.css
+│   │   ├── App.jsx                   # Main app + routing + tab logic
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── .env                          # Frontend env vars (never commit)
+│   ├── index.html
+│   ├── package.json
+│   └── eslint.config.js
+│
+└── docs/                             # Documentation
 ```
 
 ---
 
-## Screen Flow
+## 🗄 Supabase Schema
 
-```
-Auth → Onboarding (region) → Language Picker → Mood Input
-                                                    ↓
-                                              Co-Creation
-                                                    ↓
-                                            Generating…
-                                                    ↓
-                                            Music Player
-                                                    ↓
-                                     ┌──────────────────────┐
-                                     │  Songs  │  Rewards   │
-                                     └──────────────────────┘
-```
+| Table | Purpose |
+|---|---|
+| `profiles` | User profiles — `id`, `email`, `full_name`, `xp`, `plan` |
+| `songs` | All generated songs — audio URL, lyrics, mood, region, artist |
+| `user_rewards` | XP, streak, badges, last check-in per user |
+| `xp_events` | Idempotent XP log — prevents double-awarding |
+| `stripe_subscriptions` | Stripe plan, status, period end per user |
+| `mood_logs` | Mood session history |
+| `mood_sessions` | Active mood sessions |
+| `cultural_profiles` | User's cultural preferences |
 
 ---
 
-## Mood Detection Pipeline (`mood.py`)
+## 💳 Stripe Plans
 
-### Voice input (`POST /mood/detect`)
-1. Audio received as `.webm` upload
-2. **librosa** extracts acoustic features: energy, pitch, tempo, zero-crossing rate
-3. **Gemini audio agent** (via OpenRouter) transcribes + detects emotion from audio + acoustics
-4. **Gemini text agent** runs in parallel on the transcript
-5. **Blend function** merges both signals:
-   - Audio UNKNOWN / low confidence → trust text 100%, use acoustics for arousal only
-   - Both agree → boost confidence, average valence/arousal
-   - Disagree → text wins (words beat acoustics), acoustics calibrate arousal
-6. Result persisted to `mood_logs` table in Supabase
+| Plan | Price | Generations | Features |
+|---|---|---|---|
+| **Free** | $0 | 5/day | Basic moods, last 10 songs |
+| **Groove** | $9/mo | 50/day | All regions, HD audio, full history, artist styles |
+| **Studio** | $19/mo | Unlimited | Everything + commercial license + API access |
 
-### Text input (`POST /mood/detect-text`)
-- Sent directly to Gemini text agent
-- Falls back to HuggingFace `j-hartmann/emotion-english-distilroberta-base` if all LLMs fail
-
-### Why this works for Arabic
-Gemini natively understands Egyptian, Levantine, Gulf, and Moroccan dialects. The acoustic blend means even if the audio model is uncertain, the transcript text analysis always produces a valid emotion — no more `UNKNOWN` results.
+### Stripe Webhook Events Handled
+- `checkout.session.completed` → activate subscription
+- `customer.subscription.updated` → sync plan changes
+- `customer.subscription.deleted` → downgrade to free
+- `invoice.payment_succeeded` → send receipt email
+- `invoice.payment_failed` → mark as past_due
+- `invoice.payment_action_required` → mark as past_due (3D Secure)
 
 ---
 
-## Music Generation Pipeline (`music.py`)
-
-### `POST /music/generate`
-1. Resolves chosen `language_code` (e.g. `ar-eg`, `pcm`, `yo`) to full writing instruction
-2. Calls OpenRouter (Gemini → Llama → Mistral fallback chain) to write lyrics in that exact dialect
-3. Builds a Sonauto style prompt with cultural instruments, vocal style, mood words, and tempo
-4. Submits to `POST https://api.sonauto.ai/v1/generations/v3` → returns `task_id`
-
-### `GET /music/status/{task_id}`
-- Polls Sonauto until `SUCCESS`, `FAILED`, or 30 retries × 4 seconds (~2 minutes max)
-
-### `POST /music/save`
-- Called automatically by frontend once `audio_url` is confirmed
-- Saves full song record to Supabase `songs` table
-
-### `GET /music/history/{user_id}`
-- Returns all songs grouped by region for the Songs dashboard
-
----
-
-## Supabase Schema
-
-```sql
--- User profiles
-create table profiles (
-  id      uuid primary key references auth.users,
-  xp      int default 0,
-  region  text
-);
-
--- Mood logs (for streak calendar)
-create table mood_logs (
-  id         uuid default gen_random_uuid() primary key,
-  user_id    text not null,
-  valence    float,
-  arousal    float,
-  emotion    text,
-  transcript text,
-  confidence float,
-  acoustic   jsonb,
-  region     text,
-  language   text,
-  created_at timestamptz default now()
-);
-
--- Songs (history dashboard)
-create table songs (
-  id           uuid default gen_random_uuid() primary key,
-  user_id      text not null,
-  region       text,
-  region_label text,
-  mood_label   text,
-  emotion      text,
-  valence      float,
-  energy       float,
-  lyrics       text,
-  audio_url    text,
-  prompt_used  text,
-  language     text,
-  reasoning    text,
-  created_at   timestamptz default now()
-);
-
--- XP events log
-create table xp_events (
-  id         uuid default gen_random_uuid() primary key,
-  user_id    text not null,
-  action     text,
-  xp         int,
-  created_at timestamptz default now()
-);
-
--- Mood sessions (co-creation params)
-create table mood_sessions (
-  id          uuid default gen_random_uuid() primary key,
-  user_id     text not null,
-  mood_label  text,
-  valence     float,
-  energy      float,
-  region      text,
-  scale       text,
-  tempo_bpm   int,
-  instruments text[],
-  created_at  timestamptz default now()
-);
-
--- Row Level Security (all tables)
-alter table songs      enable row level security;
-alter table mood_logs  enable row level security;
-alter table profiles   enable row level security;
-alter table xp_events  enable row level security;
-
--- Open policies for now (tighten before production)
-drop policy if exists "songs open"      on songs;
-drop policy if exists "mood_logs open"  on mood_logs;
-drop policy if exists "profiles open"   on profiles;
-drop policy if exists "xp_events open"  on xp_events;
-
-create policy "songs open"      on songs      for all using (true) with check (true);
-create policy "mood_logs open"  on mood_logs  for all using (true) with check (true);
-create policy "profiles open"   on profiles   for all using (true) with check (true);
-create policy "xp_events open"  on xp_events  for all using (true) with check (true);
-```
-
----
-
-## Environment Variables
+## ⚙️ Environment Variables
 
 ### Backend (`backend/.env`)
 ```env
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-OPENROUTER_API_KEY=your-openrouter-key
-SONAUTO_API_KEY=your-sonauto-key
+SUPABASE_KEY=your-service-role-key
+
+# Stripe
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_GROOVE_PRICE_ID=price_...
+STRIPE_STUDIO_PRICE_ID=price_...
+FRONTEND_URL=https://your-app.vercel.app
+
+# AI APIs
+SONAUTO_API_KEY=...
+OPENROUTER_API_KEY=...
+
+# Email receipts (optional — Stripe sends basic receipts without this)
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=Ekko <receipts@yourdomain.com>
+
+# Render
+RENDER_EXTERNAL_URL=https://ekko-s8pl.onrender.com
 ```
 
 ### Frontend (`frontend/.env`)
 ```env
+VITE_API_URL=https://ekko-s8pl.onrender.com
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
 ---
 
-## Running Locally
+## 🚀 Running Locally
 
 ### Backend
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
-pip install fastapi uvicorn httpx supabase librosa transformers torch
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
@@ -250,43 +160,68 @@ uvicorn main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
-# Opens at http://localhost:5173
 ```
 
 ---
 
-## Supported Regions & Languages
+## 🌐 Deployment
 
-| Region | Languages available |
-|--------|-------------------|
-| 🌙 Arabic | Egyptian Arabic, Levantine Arabic, Gulf Arabic, Moroccan Darija, English |
-| 🥁 West Africa | English, Nigerian Pidgin, French, Yoruba, Hausa, Wolof |
-| 🪔 India | Hindi, Tamil, Telugu, Bengali, English |
-| 🌸 East Asia | Mandarin, Japanese, Korean, English |
-| 🎺 Latin | Spanish, Portuguese, English |
-| 🎻 Europe | English, French, German, Spanish, Italian |
-| 🌍 Global Mix | English, Spanish, French, Arabic, Hindi |
+| Service | Platform | URL |
+|---|---|---|
+| Backend | Render | https://ekko-s8pl.onrender.com |
+| Frontend | Vercel | your Vercel URL |
+| Database | Supabase | your Supabase project |
+| Payments | Stripe | dashboard.stripe.com |
 
----
+### Deploy backend to Render
+1. Push to GitHub
+2. Render auto-deploys on push
+3. Set all env vars in Render → Environment tab
 
-## XP & Badges
-
-| Badge | XP needed | How to earn |
-|-------|-----------|-------------|
-| 🌱 First Mood | 10 XP | Share your first mood |
-| 🎼 Co-Creator | 30 XP | Generate your first track |
-| 🗺️ Explorer | 60 XP | Try all 3 mood input modes |
-| 🔥 3-Day Streak | 90 XP | Check in 3 days in a row |
-| 🎹 Composer | 150 XP | Generate 5 tracks |
-| 🏆 Maestro | 300 XP | Reach 300 XP |
-
-XP earned per action: Region selected (+5), Mood shared (+10), Music co-created (+20).
+### Deploy frontend to Vercel
+1. Push to GitHub
+2. Vercel auto-deploys on push
+3. Set `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in Vercel env vars
 
 ---
 
-## Known Issues & Notes
+## 📧 Receipt Emails (Optional)
 
-- **librosa deprecation warning** — `audioread` fallback for `.webm` files is harmless but will be removed in librosa 1.0. Install `ffmpeg` to use the proper loader: `brew install ffmpeg`
-- **Sonauto 502** — if you see this, the Sonauto API key may be expired or the `/v3` endpoint has changed. Check `SONAUTO_API_KEY` in `.env` and the Sonauto dashboard.
-- **OpenRouter 429** — free-tier models have rate limits. The model list now falls through Gemini → Llama 70B → Llama 8B → Mistral automatically.
-- **History empty** — was caused by a React stale closure bug where `user` was `null` inside `generateMusic`. Fixed by using `userRef` to always read the latest user value.
+To send custom branded receipt emails:
+1. Create a free account at [resend.com](https://resend.com)
+2. Add your domain or use their sandbox domain for testing
+3. Copy your API key → add as `RESEND_API_KEY` in Render env vars
+4. Set `RESEND_FROM_EMAIL` to your verified sender
+
+Without this, Stripe automatically sends basic receipt emails to customers.
+
+---
+
+## 🎮 Reward System
+
+| Action | XP |
+|---|---|
+| Daily check-in | +10 |
+| Share a mood | +10 |
+| Generate a song | +20 |
+| Select a region | +5 |
+
+| Rank | XP Required |
+|---|---|
+| 🎧 Listener | 0 |
+| 🌊 Vibe Seeker | 50 |
+| 🔥 On Fire | 200 |
+| ⭐ Star | 500 |
+| 💎 Diamond | 1000 |
+| 🏆 Ekko Legend | 2500 |
+
+---
+
+## 🧪 Testing Stripe Payments
+
+Use Stripe test cards:
+- **Success:** `4242 4242 4242 4242`
+- **Requires auth:** `4000 0025 0000 3155`
+- **Declined:** `4000 0000 0000 9995`
+
+Expiry: any future date · CVC: any 3 digits · ZIP: any 5 digits

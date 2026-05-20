@@ -25,8 +25,7 @@ OPENROUTER_MODELS = [
 ]
 
 MOCK_MODE      = False
-MOCK_AUDIO_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-
+MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0d42b.mp3"
 # ── Artist styles per region ──────────────────────────────────────────────────
 # artist_name → passed directly to Sonauto as the artist reference
 ARTIST_STYLES = {

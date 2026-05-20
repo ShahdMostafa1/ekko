@@ -1,10 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
 // ── Expanded Emotion → mood card mapping (7 core + 13 nuanced = 20 total) ─────
-// The backend still returns one of 7 core emotions (joy/sadness/anger/fear/surprise/disgust/neutral)
-// NUANCED_MAP refines those into a specific sub-emotion using valence + arousal scores
 const EMOTION_CARDS = {
-  // ── Core 7 (backend primary emotions) ────────────────────────────────────
   joy: {
     label: "Joyful & bright",
     labelAr: "مبسوط ومشرق",
@@ -61,8 +58,6 @@ const EMOTION_CARDS = {
     color: "#27ae60",
     emoji: "🌫️",
   },
-
-  // ── Nuanced sub-emotions (used by NUANCED_MAP below) ─────────────────────
   nostalgia: {
     label: "Nostalgic & longing",
     labelAr: "حنين وشوق",
@@ -170,18 +165,13 @@ const EMOTION_CARDS = {
 };
 
 // ── Nuanced emotion resolver ──────────────────────────────────────────────────
-// Takes the 7-category backend result + valence/arousal and returns a more specific emotion key
 function resolveNuancedEmotion(topEmotion, valence, arousal) {
-  // valence: 0–1 (0=very negative, 1=very positive)
-  // arousal: 0–1 (0=very low energy, 1=very high energy)
-
   if (topEmotion === "joy") {
     if (valence > 0.85 && arousal > 0.7)  return "euphoria";
     if (valence > 0.7  && arousal < 0.4)  return "calm";
     if (arousal > 0.6)                    return "passion";
     return "joy";
   }
-
   if (topEmotion === "sadness") {
     if (arousal < 0.25)                   return "grief";
     if (valence < 0.3 && arousal < 0.35)  return "exhaustion";
@@ -189,36 +179,30 @@ function resolveNuancedEmotion(topEmotion, valence, arousal) {
     if (arousal < 0.4)                    return "loneliness";
     return "sadness";
   }
-
   if (topEmotion === "anger") {
     if (arousal < 0.45)                   return "frustration";
     if (valence < 0.25 && arousal > 0.7)  return "anger";
     return "frustration";
   }
-
   if (topEmotion === "disgust") {
     if (arousal < 0.35)                   return "fedup";
     return "disgust";
   }
-
   if (topEmotion === "fear") {
     if (valence > 0.4)                    return "wonder";
     return "fear";
   }
-
   if (topEmotion === "surprise") {
     if (valence > 0.6)                    return "wonder";
     if (valence < 0.4)                    return "fear";
     return "surprise";
   }
-
   if (topEmotion === "neutral") {
     if (valence > 0.55 && arousal < 0.4)  return "calm";
     if (valence < 0.4  && arousal < 0.35) return "exhaustion";
     if (valence > 0.5  && arousal > 0.5)  return "hope";
     return "neutral";
   }
-
   return topEmotion;
 }
 
@@ -279,7 +263,6 @@ function detectEmotionFromText(text) {
     const count = keywords.filter((kw) => lower.includes(kw)).length;
     if (count > bestCount) { bestCount = count; best = emotion; }
   }
-  // Map nuanced back to core for backend compatibility
   const NUANCED_TO_CORE = {
     nostalgia: "sadness", exhaustion: "sadness", loneliness: "sadness",
     frustration: "anger",
@@ -314,11 +297,11 @@ const QUIZ_QUESTIONS = [
     question:   "What's pulling at you most right now?",
     questionAr: "إيه اللي بيشغل دماغك أكتر دلوقتي؟",
     options: [
-      { label: "Something exciting ⚡",      labelAr: "حاجة بتحمسني",        emotion: "surprise", valence: 0.75, arousal: 0.75 },
-      { label: "Something worrying 😰",      labelAr: "حاجة بتقلقني",        emotion: "fear",     valence: 0.25, arousal: 0.65 },
-      { label: "Old memories 🌅",            labelAr: "ذكريات قديمة",        emotion: "sadness",  valence: 0.45, arousal: 0.3 },
-      { label: "Something that bothers me 😒", labelAr: "حاجة بتضايقني",    emotion: "disgust",  valence: 0.25, arousal: 0.4 },
-      { label: "Nothing in particular 🌿",   labelAr: "مش عارف، مفيش حاجة", emotion: "neutral",  valence: 0.5,  arousal: 0.3 },
+      { label: "Something exciting ⚡",        labelAr: "حاجة بتحمسني",        emotion: "surprise", valence: 0.75, arousal: 0.75 },
+      { label: "Something worrying 😰",        labelAr: "حاجة بتقلقني",        emotion: "fear",     valence: 0.25, arousal: 0.65 },
+      { label: "Old memories 🌅",              labelAr: "ذكريات قديمة",        emotion: "sadness",  valence: 0.45, arousal: 0.3 },
+      { label: "Something that bothers me 😒", labelAr: "حاجة بتضايقني",       emotion: "disgust",  valence: 0.25, arousal: 0.4 },
+      { label: "Nothing in particular 🌿",     labelAr: "مش عارف، مفيش حاجة", emotion: "neutral",  valence: 0.5,  arousal: 0.3 },
     ],
   },
   {
@@ -344,7 +327,7 @@ const LANG_FLAGS = {
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function MoodInput({ userId = "", region = null, onMoodDetected, onSubmit }) {
   const [tab, setTab]       = useState("voice");
-  const [lang, setLang]     = useState("en"); // "en" or "ar" — UI language toggle
+  const [lang, setLang]     = useState("en");
 
   // Voice state
   const [recording, setRecording]         = useState(false);
@@ -420,20 +403,20 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
 
   // ── Build mood object from backend response ───────────────────────────────
   const buildMood = (data, inputText = "") => {
-    const nuanced    = resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
-    const card       = EMOTION_CARDS[nuanced] || EMOTION_CARDS[data.top_emotion] || {
+    const nuanced = resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
+    const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[data.top_emotion] || {
       label: data.top_emotion, labelAr: data.top_emotion,
       tags: [], tagsAr: [], color: "#b09ee0", emoji: "💭",
     };
     return {
       ...card,
-      valence:      data.valence,
-      energy:       data.arousal,
-      confidence:   data.confidence,
-      emotion:      data.top_emotion,   // core emotion for backend/music
-      nuancedKey:   nuanced,            // refined display emotion
-      reasoning:    data.reasoning,
-      text:         inputText || data.transcript || "",
+      valence:    data.valence,
+      energy:     data.arousal,
+      confidence: data.confidence,
+      emotion:    data.top_emotion,
+      nuancedKey: nuanced,
+      reasoning:  data.reasoning,
+      text:       inputText || data.transcript || "",
     };
   };
 
@@ -452,7 +435,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      // Auto-switch UI language to Arabic if Arabic detected
       if (data.language === "ar") setLang("ar");
 
       const mood = buildMood(data, data.transcript);
@@ -495,14 +477,17 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
     }
   };
 
-  // ── Quiz: answer ──────────────────────────────────────────────────────────
+  // ── Quiz: answer a question ───────────────────────────────────────────────
   const answerQuiz = (option) => {
-    const answers = [...quizAnswers, option];
+    // Replace answer for current step if going back and re-answering,
+    // otherwise append
+    const answers = [...quizAnswers.slice(0, quizStep), option];
     setQuizAnswers(answers);
+
     if (quizStep + 1 < QUIZ_QUESTIONS.length) {
       setQuizStep(quizStep + 1);
     } else {
-      // Tally emotions and average valence/arousal
+      // All questions answered — tally result
       const counts = {};
       let totalValence = 0, totalArousal = 0;
       answers.forEach(({ emotion, valence, arousal }) => {
@@ -510,12 +495,12 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         totalValence += valence;
         totalArousal += arousal;
       });
-      const winner    = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-      const avgV      = totalValence / answers.length;
-      const avgA      = totalArousal / answers.length;
-      const nuanced   = resolveNuancedEmotion(winner, avgV, avgA);
-      const card      = EMOTION_CARDS[nuanced] || EMOTION_CARDS[winner];
-      const mood      = { ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner };
+      const winner  = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+      const avgV    = totalValence / answers.length;
+      const avgA    = totalArousal / answers.length;
+      const nuanced = resolveNuancedEmotion(winner, avgV, avgA);
+      const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[winner];
+      const mood    = { ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner };
       setQuizMood(mood);
       onMoodDetected?.(mood);
     }
@@ -577,10 +562,10 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       if (voiceStatus === "error")     return "مش قادر يسمع — حاول تاني";
       return "اضغط وقول مزاجك بأي لغة";
     }
-    if (recording)                     return "Listening… tap when you're done";
-    if (voiceStatus === "analysing")   return "Analysing your voice…";
-    if (voiceStatus === "done")        return "Tap to speak again";
-    if (voiceStatus === "error")       return "Could not detect — try again";
+    if (recording)                   return "Listening… tap when you're done";
+    if (voiceStatus === "analysing") return "Analysing your voice…";
+    if (voiceStatus === "done")      return "Tap to speak again";
+    if (voiceStatus === "error")     return "Could not detect — try again";
     return "Tap to speak — any language";
   };
 
@@ -598,9 +583,9 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         {["voice", "text", "quiz"].map((t) => (
           <button key={t} className={`mi-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
             {t === "voice"
-              ? isAr ? "🎙 صوت"  : "🎙 Voice"
+              ? isAr ? "🎙 صوت"    : "🎙 Voice"
               : t === "text"
-              ? isAr ? "✍️ نص"   : "✍️ Text"
+              ? isAr ? "✍️ نص"    : "✍️ Text"
               : isAr ? "🎯 اختبار" : "🎯 Quiz"}
           </button>
         ))}
@@ -716,22 +701,77 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         <div className="mi-panel">
           {!quizMood ? (
             <div className="quiz-wrap">
+
+              {/* Progress pips — clicking a completed pip jumps back */}
               <div className="quiz-progress">
                 {QUIZ_QUESTIONS.map((_, i) => (
-                  <div key={i} className={`quiz-pip ${i < quizStep ? "done" : i === quizStep ? "active" : ""}`} />
+                  <div
+                    key={i}
+                    className={`quiz-pip ${i < quizStep ? "done" : i === quizStep ? "active" : ""}`}
+                    onClick={() => {
+                      if (i < quizStep) {
+                        setQuizStep(i);
+                        setQuizAnswers((prev) => prev.slice(0, i));
+                      }
+                    }}
+                    style={{ cursor: i < quizStep ? "pointer" : "default" }}
+                  />
                 ))}
               </div>
+
               <p className="quiz-q">
                 {isAr ? QUIZ_QUESTIONS[quizStep].questionAr : QUIZ_QUESTIONS[quizStep].question}
               </p>
+
+              {/* Show previously selected answer highlighted */}
               <div className="quiz-options">
-                {QUIZ_QUESTIONS[quizStep].options.map((opt) => (
-                  <button key={opt.label} className="quiz-opt" onClick={() => answerQuiz(opt)}>
-                    {isAr ? opt.labelAr : opt.label}
-                  </button>
-                ))}
+                {QUIZ_QUESTIONS[quizStep].options.map((opt) => {
+                  const isSelected =
+                    quizAnswers[quizStep] &&
+                    quizAnswers[quizStep].label === opt.label;
+                  return (
+                    <button
+                      key={opt.label}
+                      className={`quiz-opt ${isSelected ? "selected" : ""}`}
+                      onClick={() => answerQuiz(opt)}
+                    >
+                      {isAr ? opt.labelAr : opt.label}
+                    </button>
+                  );
+                })}
               </div>
-              <p className="quiz-counter">{quizStep + 1} / {QUIZ_QUESTIONS.length}</p>
+
+              {/* ── Previous / counter / Next row ── */}
+              <div className="quiz-nav">
+                {/* Previous button */}
+                <button
+                  className="quiz-nav-btn"
+                  onClick={() => {
+                    if (quizStep > 0) {
+                      setQuizStep(quizStep - 1);
+                    }
+                  }}
+                  disabled={quizStep === 0}
+                >
+                  {isAr ? "التالي →" : "← Previous"}
+                </button>
+
+                <p className="quiz-counter">{quizStep + 1} / {QUIZ_QUESTIONS.length}</p>
+
+                {/* Next button — only enabled if this step already has an answer */}
+                <button
+                  className="quiz-nav-btn"
+                  onClick={() => {
+                    if (quizStep < quizAnswers.length) {
+                      setQuizStep(quizStep + 1);
+                    }
+                  }}
+                  disabled={quizStep >= quizAnswers.length}
+                >
+                  {isAr ? "← السابق" : "Next →"}
+                </button>
+              </div>
+
             </div>
           ) : (
             <div className="result-area">
@@ -812,6 +852,8 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           align-items: center;
           gap: 20px;
         }
+
+        /* ── Voice ── */
         .voice-wrap {
           display: flex;
           flex-direction: column;
@@ -851,6 +893,8 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .analysing-dots { display: flex; gap: 6px; align-items: center; }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #7c5ce7; animation: dotBounce .8s ease-in-out infinite alternate; }
         @keyframes dotBounce { from{transform:translateY(0);opacity:.5}to{transform:translateY(-6px);opacity:1} }
+
+        /* ── Text ── */
         .text-wrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
         .text-prompt { font-size: 14px; color: #7b6fa8; margin: 0; font-weight: 500; }
         .text-area { width: 100%; box-sizing: border-box; border: 1.5px solid #d4caf0; border-radius: 12px; padding: 12px 14px; font-size: 14px; font-family: inherit; color: #3d2e6b; background: #fff; resize: none; transition: border-color .2s; outline: none; line-height: 1.6; }
@@ -858,6 +902,8 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .analyse-btn { align-self: flex-end; padding: 10px 20px; border: none; border-radius: 12px; background: #7c5ce7; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .18s, transform .12s; }
         .analyse-btn:hover:not(:disabled) { background: #6347cc; transform: translateY(-1px); }
         .analyse-btn:disabled { opacity: .45; cursor: default; }
+
+        /* ── Quiz ── */
         .quiz-wrap { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px; }
         .quiz-progress { display: flex; gap: 6px; }
         .quiz-pip { width: 22px; height: 5px; border-radius: 3px; background: #e0d8f5; transition: background .25s; }
@@ -865,9 +911,66 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .quiz-pip.done   { background: #b09ee0; }
         .quiz-q { font-size: 15px; font-weight: 600; color: #3d2e6b; text-align: center; margin: 0; line-height: 1.5; }
         .quiz-options { width: 100%; display: flex; flex-direction: column; gap: 8px; }
-        .quiz-opt { width: 100%; padding: 12px 16px; border: 1.5px solid #d4caf0; border-radius: 12px; background: #fff; font-size: 13px; font-weight: 500; color: #3d2e6b; cursor: pointer; text-align: left; transition: border-color .18s, background .18s, transform .12s; }
-        .quiz-opt:hover { border-color: #7c5ce7; background: #f5f1ff; transform: translateX(3px); }
+
+        /* FIX 1 — hover text color: explicit color: #3d2e6b on both base and hover states */
+        .quiz-opt {
+          width: 100%;
+          padding: 12px 16px;
+          border: 1.5px solid #d4caf0;
+          border-radius: 12px;
+          background: #fff;
+          font-size: 13px;
+          font-weight: 500;
+          color: #3d2e6b;
+          cursor: pointer;
+          text-align: left;
+          transition: border-color .18s, background .18s, transform .12s, color .18s;
+        }
+        .quiz-opt:hover {
+          border-color: #7c5ce7;
+          background: #f5f1ff;
+          color: #3d2e6b;
+          transform: translateX(3px);
+        }
+        /* Selected state — highlights the previously chosen answer when navigating back */
+        .quiz-opt.selected {
+          border-color: #7c5ce7;
+          background: #ede8ff;
+          color: #3d2e6b;
+          font-weight: 700;
+        }
+
+        /* FIX 2 — Previous + Next nav row */
+        .quiz-nav {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
+          margin-top: 4px;
+        }
+        .quiz-nav-btn {
+          padding: 7px 16px;
+          border: 1.5px solid #d4caf0;
+          border-radius: 20px;
+          background: transparent;
+          color: #7c5ce7;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          font-family: inherit;
+          transition: background .18s, border-color .18s;
+        }
+        .quiz-nav-btn:hover:not(:disabled) {
+          background: #f0ecff;
+          border-color: #7c5ce7;
+        }
+        .quiz-nav-btn:disabled {
+          opacity: 0.35;
+          cursor: default;
+        }
         .quiz-counter { font-size: 12px; color: #b09ee0; margin: 0; }
+
+        /* ── Result / shared ── */
         .reset-btn { margin-top: 8px; padding: 9px 20px; border: 1.5px solid #c4b5f0; border-radius: 12px; background: transparent; color: #7c5ce7; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .18s; }
         .reset-btn:hover { background: #f0ecff; }
         .result-area { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; animation: fadeUp .35s ease; }
@@ -885,7 +988,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .meter-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
         .meter-val { font-size: 11px; font-weight: 600; color: #8b7eb8; width: 30px; }
         .confidence-note { font-size: 11px; color: #b09ee0; margin: 0; }
-        .continue-btn { width: 100%; padding: 14px; border: none; border-radius: 14px; background: linear-gradient(135deg,#7c5ce7,#a855f7); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; transition: transform .15s,box-shadow .15s; box-shadow: 0 4px 16px rgba(124,92,231,.35); margin-top: 4px; }
+        .continue-btn { width: 100%; padding: 14px; border: none; border-radius: 14px; background: linear-gradient(135deg,#7c5ce7,#a855f7); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s; box-shadow: 0 4px 16px rgba(124,92,231,.35); margin-top: 4px; }
         .continue-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(124,92,231,.45); }
       `}</style>
     </div>

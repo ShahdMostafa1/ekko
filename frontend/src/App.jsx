@@ -11,15 +11,17 @@ import RewardsScreen  from './components/RewardsScreen'
 import RewardBadge    from './components/RewardBadge'
 import BackButton     from './components/BackButton'
 import AdminDashboard from './components/AdminDashboard'
+import SubscribeButton from './components/SubscribeButton'
+import BillingPortalButton from './components/BillingPortalButton'
 import './App.css'
 
 const STARS = Array.from({ length: 55 }).map((_, i) => ({
   id: i,
   left: `${Math.random() * 100}%`,
-  top: `${Math.random() * 100}%`,
-  animationDelay: `${(Math.random() * 4).toFixed(2)}s`,
+  top:  `${Math.random() * 100}%`,
+  animationDelay:    `${(Math.random() * 4).toFixed(2)}s`,
   animationDuration: `${(2 + Math.random() * 3).toFixed(2)}s`,
-  width: `${1 + Math.random() * 2}px`,
+  width:  `${1 + Math.random() * 2}px`,
   height: `${1 + Math.random() * 2}px`,
 }))
 
@@ -45,6 +47,27 @@ const BACK_MAP = {
 
 const ADMIN_EMAIL = 'admin@ekko.app'
 
+// ── Idempotent XP helper ──────────────────────────────────────────────────────
+async function awardXpIdempotent(userId, action, sessionKey) {
+  if (!userId) return null
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(`${import.meta.env.VITE_API_URL}/rewards/xp`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+      },
+      body: JSON.stringify({ user_id: userId, action, session_key: sessionKey }),
+    })
+    const data = await res.json()
+    return data
+  } catch (err) {
+    console.warn('[ekko] XP award failed silently:', err)
+    return null
+  }
+}
+
 export default function App() {
   const [screen, setScreen]           = useState('loading')
   const [user, setUser]               = useState(null)
@@ -55,12 +78,17 @@ export default function App() {
   const [xp, setXp]                   = useState(0)
   const [reward, setReward]           = useState(null)
 
-  // ── Refs — survive tab-switch backgrounding & stale closures ─────────
-  const pendingGenRef = useRef(null)
-  const moodDataRef   = useRef(null)
-  const regionRef     = useRef(null)
-  const languageRef   = useRef(null)
-  const userRef       = useRef(null)
+  // Tracks in memory whether region XP was already given this session.
+  // The real source of truth is profiles.region_xp_awarded in Supabase.
+  const regionXpAwardedRef = useRef(false)
+
+  const moodSessionIdRef = useRef(null)
+  const songSessionIdRef = useRef(null)
+  const pendingGenRef    = useRef(null)
+  const moodDataRef      = useRef(null)
+  const regionRef        = useRef(null)
+  const languageRef      = useRef(null)
+  const userRef          = useRef(null)
 
   useEffect(() => { moodDataRef.current  = moodData  }, [moodData])
   useEffect(() => { regionRef.current    = region    }, [region])
@@ -73,35 +101,21 @@ export default function App() {
     setTimeout(() => setReward(null), 3000)
   }
 
-  const addXp = async (amount, action) => {
+  const addXp = async (action, sessionKey) => {
     const currentUser = userRef.current
-    if (currentUser) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('xp')
-        .eq('id', currentUser.id)
-        .single()
+    if (!currentUser) return
 
-      const currentXp = profile?.xp || 0
-      const newXp     = currentXp + amount
+    const result = await awardXpIdempotent(currentUser.id, action, sessionKey)
+    if (!result) return
 
-      await supabase
-        .from('profiles')
-        .update({ xp: newXp })
-        .eq('id', currentUser.id)
-
-      await supabase
-        .from('xp_events')
-        .insert({ user_id: currentUser.id, action, xp: amount })
-
-      setXp(newXp)
-    } else {
-      setXp(prev => prev + amount)
+    if (result.awarded) {
+      setXp(result.total_xp)
+      showReward(`+${result.xp_awarded} XP`, action.replace(/_/g, ' '))
     }
-    showReward(`+${amount} XP`, action)
   }
 
   // ── Core music fetch ──────────────────────────────────────────────────
+  // music_cocreated XP is NOT awarded here — only in handleSongSaved.
   const generateMusic = useCallback(async (params, finalScale, finalInstr) => {
     const mood        = moodDataRef.current
     const reg         = regionRef.current
@@ -134,6 +148,9 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
 
+      const songId = data.song_id || data.task_id || `song_${Date.now()}`
+      songSessionIdRef.current = songId
+
       setMusicParams({
         ...data,
         user_id:       currentUser?.id || '',
@@ -147,6 +164,8 @@ export default function App() {
 
     } catch (err) {
       console.error('[ekko] Music generation failed, using mock:', err)
+      const songId = `mock_${Date.now()}`
+      songSessionIdRef.current = songId
       setMusicParams({
         audio_url:   'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
         prompt_used: `${moodDataRef.current?.label} music for ${regionRef.current?.id || 'global'} region`,
@@ -156,8 +175,31 @@ export default function App() {
     }
 
     pendingGenRef.current = null
-    await addXp(20, 'Music co-created')
     setScreen('player')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Called by MusicPlayer only after song is confirmed saved ──────────
+  const handleSongSaved = useCallback(async (savedSongId) => {
+    console.log('[ekko] ✅ Song saved to history')
+    const songKey = savedSongId || songSessionIdRef.current
+    if (!songKey) return
+    await addXp('music_cocreated', `music_cocreated:${songKey}`)
+
+    // After a song is generated and actually saved, allow region XP to be
+    // awarded again on the next region+language selection cycle.
+    const currentUser = userRef.current
+    if (currentUser) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({ region_xp_awarded: false })
+          .eq('id', currentUser.id)
+        regionXpAwardedRef.current = false
+        console.log('[ekko] Region XP guard reset after saved song')
+      } catch (err) {
+        console.warn('[ekko] Failed to reset region_xp_awarded:', err)
+      }
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Page Visibility API ───────────────────────────────────────────────
@@ -178,20 +220,31 @@ export default function App() {
     setUser(authUser)
     userRef.current = authUser
 
-    // Admin bypasses everything and goes straight to dashboard
     if (authUser.email === ADMIN_EMAIL) {
       setScreen('admin')
       return
     }
 
-    const { data: profile } = await supabase
+    let { data: profile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', authUser.id)
       .single()
 
+    if (!profile) {
+      const { data: newProfile } = await supabase
+        .from('profiles')
+        .insert({ id: authUser.id, xp: 0, region: null, region_xp_awarded: false })
+        .select()
+        .single()
+      profile = newProfile
+    }
+
     if (profile) {
       setXp(profile.xp || 0)
+      // Restore the region XP flag from DB into memory ref
+      regionXpAwardedRef.current = !!profile.region_xp_awarded
+
       if (profile.region && profile.region !== 'global') {
         setRegion({ id: profile.region, emoji: '🌍', label: profile.region })
         setScreen('language')
@@ -205,23 +258,23 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadProfile(session.user)
-      } else {
-        setScreen('auth')
-      }
+      if (session?.user) loadProfile(session.user)
+      else setScreen('auth')
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         setUser(null)
-        userRef.current       = null
+        userRef.current          = null
+        regionXpAwardedRef.current = false
         setXp(0)
         setRegion(null)
         setLanguage(null)
         setMoodData(null)
         setMusicParams(null)
-        pendingGenRef.current = null
+        pendingGenRef.current    = null
+        moodSessionIdRef.current = null
+        songSessionIdRef.current = null
         setScreen('auth')
         return
       }
@@ -236,13 +289,14 @@ export default function App() {
     setUser(authUser)
     userRef.current = authUser
 
-    // Admin bypasses everything and goes straight to dashboard
     if (authUser.email === ADMIN_EMAIL) {
       setScreen('admin')
       return
     }
 
     setXp(profile?.xp || 0)
+    regionXpAwardedRef.current = !!profile?.region_xp_awarded
+
     if (profile?.region && profile.region !== 'global') {
       setRegion({ id: profile.region, emoji: '🌍', label: profile.region })
       setScreen('language')
@@ -253,26 +307,53 @@ export default function App() {
 
   const handleOnboard = async (selectedRegion) => {
     setRegion(selectedRegion)
+
     if (userRef.current) {
       await supabase
         .from('profiles')
         .update({ region: selectedRegion.id })
         .eq('id', userRef.current.id)
     }
-    if (!musicParams) {
-      await addXp(5, 'Region selected')
-    }
+
     setScreen('language')
   }
 
-  const handleLanguagePick = (selectedLanguage) => {
+  // Changing language gives NO XP — just move to mood screen.
+  const handleLanguagePick = async (selectedLanguage) => {
     setLanguage(selectedLanguage)
+
+    // Award the region+language bonus once per cycle (persisted in DB).
+    // Only award if user has a non-global region and hasn't been awarded yet.
+    const currentUser = userRef.current
+    const currentRegion = regionRef.current
+    if (currentUser && currentRegion && currentRegion.id !== 'global' && !regionXpAwardedRef.current) {
+      regionXpAwardedRef.current = true // block races
+      try {
+        await supabase
+          .from('profiles')
+          .update({ region_xp_awarded: true })
+          .eq('id', currentUser.id)
+        await addXp('region_selected', `region_selected:${currentUser.id}`)
+      } catch (err) {
+        console.warn('[ekko] Failed to persist region_xp_awarded:', err)
+      }
+    } else {
+      console.log('[ekko] Region XP already awarded or no region — skipping')
+    }
+
     setScreen('mood')
   }
 
   const handleMoodSubmit = async (mood) => {
     setMoodData(mood)
-    await addXp(10, 'Mood shared')
+
+    const sessionId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
+    moodSessionIdRef.current = sessionId
+    songSessionIdRef.current = null
+
+    if (userRef.current) {
+      await addXp('mood_shared', `mood_shared:${sessionId}`)
+    }
 
     const currentUser = userRef.current
     if (currentUser) {
@@ -329,12 +410,11 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────
   if (screen === 'loading') return (
-    <div className="ekko-root" style={{ display:'flex', justifyContent:'center', alignItems:'center' }}>
+    <div className="ekko-root" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
       <div className="gen-orb" />
     </div>
   )
 
-  // Admin gets full viewport takeover — no header, stars, or nav
   if (screen === 'admin') return (
     <AdminDashboard onExit={handleSignOut} />
   )
@@ -345,7 +425,7 @@ export default function App() {
         {STARS.map(s => (
           <span key={s.id} className="star" style={{
             left: s.left, top: s.top,
-            animationDelay: s.animationDelay,
+            animationDelay:    s.animationDelay,
             animationDuration: s.animationDuration,
             width: s.width, height: s.height,
           }} />
@@ -354,7 +434,7 @@ export default function App() {
 
       {screen !== 'auth' && screen !== 'loading' && (
         <header className="ekko-header">
-          <div className="ekko-logo" onClick={() => setScreen('mood')} style={{ cursor:'pointer' }}>
+          <div className="ekko-logo" onClick={() => setScreen('mood')} style={{ cursor: 'pointer' }}>
             Ekko
             {region && (
               <span className="ekko-region-tag">
@@ -363,15 +443,22 @@ export default function App() {
               </span>
             )}
           </div>
-          <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {xp > 0 && <div className="xp-chip">{xp} XP</div>}
             <button className="nav-history-btn" onClick={() => setScreen('history')}>🎵 Songs</button>
             <button className="nav-history-btn" onClick={() => setScreen('rewards')}>🏅 Rewards</button>
++           {/* Pricing / billing actions */}
++           <SubscribeButton plan="groove" userId={userRef.current?.id} email={userRef.current?.email}>
++             Subscribe: Groove
++           </SubscribeButton>
++           <SubscribeButton plan="studio" userId={userRef.current?.id} email={userRef.current?.email}>
++             Subscribe: Studio
++           </SubscribeButton>
++           <BillingPortalButton userId={userRef.current?.id}>Billing</BillingPortalButton>
             <button className="nav-history-btn" onClick={handleSignOut}>Sign out</button>
           </div>
         </header>
       )}
-
       <main className="ekko-main">
         {backInfo && screen !== 'generating' && screen !== 'auth' && (
           <div className="back-btn-wrap">
@@ -409,7 +496,7 @@ export default function App() {
           <div className="player-screen">
             <MusicPlayer
               params={musicParams}
-              onSaved={() => console.log('[ekko] ✅ Song saved to history')}
+              onSaved={(savedSongId) => handleSongSaved(savedSongId || songSessionIdRef.current)}
             />
           </div>
         )}
