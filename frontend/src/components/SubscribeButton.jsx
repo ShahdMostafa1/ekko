@@ -1,36 +1,108 @@
-import React, { useState } from "react";
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 
-export default function SubscribeButton({ plan, userId, email, children }) {
-  const [loading, setLoading] = useState(false);
+/**
+ * SubscribeButton
+ * Props:
+ *   plan       — 'groove' | 'studio'
+ *   userId     — current user id
+ *   email      — current user email
+ *   currentPlan — optional override; if not passed, fetched from DB
+ *   onSuccess  — called after successful checkout redirect
+ */
+export default function SubscribeButton({ plan, userId, email, currentPlan, onSuccess, children }) {
+  const [loading, setLoading]         = useState(false)
+  const [activePlan, setActivePlan]   = useState(currentPlan || null)
 
-  const handleCheckout = async () => {
-    if (!userId || !email || !plan) {
-      console.error("Missing userId/email/plan for checkout");
-      return;
+  // If currentPlan not passed as prop, fetch it from profiles
+  useEffect(() => {
+    if (currentPlan !== undefined) {
+      setActivePlan(currentPlan)
+      return
     }
-    setLoading(true);
+    if (!userId) return
+    supabase
+      .from('profiles')
+      .select('plan, plan_status')
+      .eq('id', userId)
+      .single()
+      .then(({ data }) => {
+        if (data) setActivePlan(data.plan || 'free')
+      })
+  }, [userId, currentPlan])
+
+  const isCurrentPlan = activePlan === plan
+  const isHigherPlan  = plan === 'groove' && activePlan === 'studio'
+
+  const handleClick = async () => {
+    if (isCurrentPlan) {
+      alert(`You're already on the ${plan.charAt(0).toUpperCase() + plan.slice(1)} plan!`)
+      return
+    }
+    if (isHigherPlan) {
+      alert(`You're already on a higher plan (Studio). Visit Billing to manage your subscription.`)
+      return
+    }
+
+    setLoading(true)
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/create-checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, email, plan }),
-      });
-      const data = await res.json();
-      if (data?.url) {
-        window.location.href = data.url;
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+        },
+        body: JSON.stringify({ plan, user_id: userId, email }),
+      })
+      const data = await res.json()
+      if (data.url) {
+        onSuccess?.()
+        window.location.href = data.url
       } else {
-        console.error("Checkout creation failed", data);
+        alert('Could not start checkout. Please try again.')
       }
     } catch (err) {
-      console.error("Checkout error", err);
+      console.error('[ekko] Checkout error:', err)
+      alert('Something went wrong. Please try again.')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
+
+  // Style variants
+  const isPrimary = plan === 'studio'
+  const label = isCurrentPlan
+    ? `✓ Current Plan`
+    : isHigherPlan
+    ? `✓ On Studio`
+    : loading
+    ? 'Loading…'
+    : children || `Subscribe: ${plan.charAt(0).toUpperCase() + plan.slice(1)}`
 
   return (
-    <button onClick={handleCheckout} disabled={loading} className="subscribe-btn">
-      {loading ? "Redirecting…" : children || `Subscribe (${plan})`}
+    <button
+      onClick={handleClick}
+      disabled={loading || isCurrentPlan || isHigherPlan}
+      style={{
+        padding: '8px 16px',
+        borderRadius: '8px',
+        border: isCurrentPlan || isHigherPlan ? '1px solid rgba(255,255,255,0.2)' : 'none',
+        background: isCurrentPlan || isHigherPlan
+          ? 'rgba(255,255,255,0.08)'
+          : isPrimary
+          ? 'linear-gradient(135deg, #7c3aed, #2563eb)'
+          : 'linear-gradient(135deg, #6d28d9, #4f46e5)',
+        color: isCurrentPlan || isHigherPlan ? 'rgba(255,255,255,0.45)' : 'white',
+        fontSize: '13px',
+        fontWeight: 600,
+        cursor: isCurrentPlan || isHigherPlan ? 'default' : 'pointer',
+        opacity: loading ? 0.7 : 1,
+        transition: 'all 0.2s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
     </button>
-  );
+  )
 }

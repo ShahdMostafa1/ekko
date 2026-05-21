@@ -2,10 +2,8 @@
 Ekko — FastAPI Backend Entry Point
 """
 from __future__ import annotations
-
 import asyncio
 import os
-
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,11 +17,10 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────
-# Add every frontend URL you use here
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
-    "https://ekko-silk.vercel.app",        # ← your actual Vercel URL
+    "https://ekko-silk.vercel.app",       # ← your actual Vercel URL
     "https://ekko-s8pl.onrender.com",
 ]
 
@@ -47,6 +44,7 @@ app.include_router(music_router)
 app.include_router(rewards_router)
 app.include_router(stripe_router)
 
+
 # ── Keep-alive ────────────────────────────────────────────────
 async def _keep_alive():
     render_url = os.getenv("RENDER_EXTERNAL_URL")
@@ -64,14 +62,17 @@ async def _keep_alive():
             print(f"[keepalive] ping failed: {e}")
         await asyncio.sleep(600)
 
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(_keep_alive())
     print("[ekko] ✅ Backend started — all layers online")
 
+
 @app.get("/")
 async def root():
     return {"project": "Ekko", "version": "1.0.0", "docs": "/docs"}
+
 
 @app.get("/health")
 async def health():

@@ -33,6 +33,7 @@ python-dotenv==1.2.2
 python-multipart==0.0.27
 PyYAML==6.0.3
 realtime==2.29.0
+reportlab==4.4.1
 requests==2.33.1
 scikit-learn==1.8.0
 scipy==1.17.1
@@ -42,6 +43,7 @@ soundfile==0.13.1
 soxr==1.1.0
 starlette==1.0.0
 storage3==2.29.0
+stripe==12.1.0
 supabase==2.29.0
 supabase-auth==2.29.0
 supabase-functions==2.29.0

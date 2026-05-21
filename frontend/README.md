@@ -48,6 +48,7 @@ EKKO/
 │   │   │   ├── AdminDashboard.jsx    # Admin panel
 │   │   │   ├── AuthScreen.jsx        # Login / signup
 │   │   │   ├── BackButton.jsx        # Navigation helper
+│   │   │   ├── BillingPortalButton.jsx  # Stripe billing portal launcher ← NEW
 │   │   │   ├── CoCreation.jsx        # Music co-creation UI
 │   │   │   ├── LanguagePicker.jsx    # Language/dialect selector
 │   │   │   ├── MoodInput.jsx         # Mood entry (text/voice/quiz)
@@ -56,7 +57,8 @@ EKKO/
 │   │   │   ├── PlansScreen.jsx       # Stripe plans (Free/Groove/Studio)
 │   │   │   ├── RewardBadge.jsx       # Badge display component
 │   │   │   ├── RewardsScreen.jsx     # Full rewards/XP/streak screen
-│   │   │   └── SongHistory.jsx       # Persistent song history per user
+│   │   │   ├── SongHistory.jsx       # Persistent song history per user
+│   │   │   └── SubscribeButton.jsx   # One-click Stripe checkout trigger ← NEW
 │   │   ├── lib/
 │   │   │   └── supabase.js           # Supabase client
 │   │   ├── utils/
@@ -79,7 +81,7 @@ EKKO/
 
 | Table | Purpose |
 |---|---|
-| `profiles` | User profiles — `id`, `email`, `full_name`, `xp`, `plan` |
+| `profiles` | User profiles — `id`, `email`, `full_name`, `xp`, `plan`, `stripe_customer_id`, `stripe_subscription_id`, `plan_status`, `plan_latest_period_end` |
 | `songs` | All generated songs — audio URL, lyrics, mood, region, artist |
 | `user_rewards` | XP, streak, badges, last check-in per user |
 | `xp_events` | Idempotent XP log — prevents double-awarding |

@@ -1,256 +1,448 @@
-"""
-Ekko — Stripe Integration
-POST /stripe/create-checkout        → create Stripe Checkout session
-POST /stripe/create-portal          → open Stripe Customer Portal
-POST /stripe/webhook                → handle all Stripe events
-GET  /stripe/status/{user_id}       → current plan & status
-"""
-from __future__ import annotations
-from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request, Header
+import os
+import io
+import base64
+import stripe
+from datetime import datetime
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import os
-import stripe
-import json
+from supabase import create_client
 
-router = APIRouter(prefix="/stripe", tags=["Stripe — Subscriptions"])
+# ── PDF generation ────────────────────────────────────────────────────────────
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT, TA_LEFT, TA_CENTER
 
-# ── Stripe config ─────────────────────────────────────────────
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
-WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-GROOVE_PRICE_ID = os.getenv("STRIPE_GROOVE_PRICE_ID", "")
-STUDIO_PRICE_ID = os.getenv("STRIPE_STUDIO_PRICE_ID", "")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# ── Email sending ─────────────────────────────────────────────────────────────
+try:
+    import resend
+except Exception:
+    resend = None
 
-PRICE_TO_PLAN: dict[str, str] = {}
+router = APIRouter(prefix="/stripe", tags=["stripe"])
 
-def _price_map():
-    global PRICE_TO_PLAN
-    PRICE_TO_PLAN = {
-        GROOVE_PRICE_ID: "groove",
-        STUDIO_PRICE_ID: "studio",
-    }
+# ── Clients ───────────────────────────────────────────────────────────────────
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+supabase = create_client(
+    os.environ.get("SUPABASE_URL"),
+    os.environ.get("SUPABASE_KEY"),
+)
 
-def _get_supabase():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
-    if not url or not key:
-        return None
-    from supabase import create_client
-    return create_client(url, key)
+# Configure Resend only if available
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+if resend:
+    resend.api_key = RESEND_API_KEY
 
-def _send_receipt_email(to_email: str, customer_name: str, plan: str,
-                        amount: float, currency: str, invoice_url: str,
-                        period_end: str):
-    """
-    Optional: send a custom receipt via Resend if RESEND_API_KEY is set.
-    If not configured, Stripe's own receipt emails will be used.
-    """
-    resend_key = os.getenv("RESEND_API_KEY")
-    if not resend_key:
-        print("[stripe] RESEND_API_KEY not set — skipping custom receipt email")
-        return
+RESEND_FROM    = os.environ.get("RESEND_FROM_EMAIL", "Ekko <receipts@ekko.app>")
+FRONTEND_URL   = os.environ.get("FRONTEND_URL", "https://ekko.app")
 
-    try:
-        # Minimal send via Resend API (optional)
-        import requests
-        subject = f"Your {plan.capitalize()} subscription receipt"
-        body = f"Thanks {customer_name} — you subscribed to {plan}.\n\nAmount: {amount:.2f} {currency.upper()}\nPeriod ends: {period_end}\n\nView invoice: {invoice_url}"
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {resend_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": "no-reply@ekko.app",
-                "to": [to_email],
-                "subject": subject,
-                "text": body,
-            },
-        )
-        if resp.status_code >= 300:
-            print("[stripe] Resend email failed:", resp.text)
-    except Exception as e:
-        print("[stripe] Failed to send receipt email:", e)
+PLAN_PRICE_IDS = {
+    "groove": os.environ.get("STRIPE_GROOVE_PRICE_ID"),
+    "studio": os.environ.get("STRIPE_STUDIO_PRICE_ID"),
+}
+PLAN_AMOUNTS = {"groove": 9.00, "studio": 19.00}
 
+# ── Ekko logo (base64-encoded PNG) embedded so PDFs work without filesystem ───
+EKKO_LOGO_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAYAAAA5ZDbSAAB4LElEQVR4nNT9d5ylWVXvj7/33k84"
+    "+VSO3dXd1XE6zHRPzoGBYUgDDAxJYERUjFwVUdSrCCoXUUSCosQLKGGGMDDEASYyOfSEzjlUV1eu"
+    "OvlJe+/fH89TPaNfw9WrXn/n9apXV1edc+qcs56913xnr732enxf1iHLmmRZC5N3KcZGHaOjo5JS"
+    "YYWQ3CCujBLX1xBX16BKbhh9aXYvi1NP0Jx+ml5rv++4dGrdxeBd0VtRtPEKvEIqeMGTAcCyT6Uh"
+    "MNZYO1TiWAe2v2S8cUvZe5rBhTQiCVQIWOIqp9lQgbsa7iXKV9eTCcq9hhPTg9wdBZaKhbxCKl9"
+    "aTAFOjfLaFq7l5I2iGrQKPxH86F3aW09grRWSCgkAAAAASUVORK5CYII="
+)
 
-# ── Models ────────────────────────────────────────────────────
+# ── Request models ─────────────────────────────────────────────────────────────
 class CheckoutRequest(BaseModel):
+    plan:    str
     user_id: str
     email:   str
-    plan:    str   # 'groove' or 'studio'
 
 class PortalRequest(BaseModel):
     user_id: str
 
 
-# Ensure price map on import
-_price_map()
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
-# ── POST /stripe/create-checkout ─────────────────────────────
-@router.post("/create-checkout")
-async def create_checkout(req: CheckoutRequest):
-    supabase = _get_supabase()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
+def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
+    """Return existing stripe_customer_id or create a new one."""
+    row = supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).single().execute()
+    cid = (row.data or {}).get("stripe_customer_id")
+    if cid:
+        return cid
+    customer = stripe.Customer.create(email=email, metadata={"user_id": user_id})
+    supabase.table("profiles").update({"stripe_customer_id": customer.id}).eq("id", user_id).execute()
+    return customer.id
 
-    # choose price id from plan
-    plan = (req.plan or "").lower()
-    if plan == "groove":
-        price_id = GROOVE_PRICE_ID
-    elif plan == "studio":
-        price_id = STUDIO_PRICE_ID
+
+def _active_subscription_for_plan(customer_id: str, plan: str) -> bool:
+    """Return True if customer already has an active subscription for this plan."""
+    price_id = PLAN_PRICE_IDS.get(plan)
+    if not price_id:
+        return False
+    subs = stripe.Subscription.list(customer=customer_id, status="active", expand=["data.items.data.price"])
+    for sub in subs.auto_paging_iter():
+        for item in sub["items"]["data"]:
+            if item["price"]["id"] == price_id:
+                return True
+    return False
+
+
+def _build_pdf(doc_type: str, invoice_number: str, receipt_number: str,
+               customer_email: str, plan: str, amount: float,
+               period_start: str, period_end: str) -> bytes:
+    """
+    Build a branded PDF for either 'invoice' or 'receipt'.
+    Returns raw PDF bytes.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        rightMargin=20*mm, leftMargin=20*mm,
+        topMargin=20*mm, bottomMargin=20*mm,
+    )
+
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]
+    h1     = ParagraphStyle("h1", parent=normal, fontSize=22, fontName="Helvetica-Bold", spaceAfter=4)
+    small  = ParagraphStyle("small", parent=normal, fontSize=9, textColor=colors.HexColor("#666666"))
+    bold9  = ParagraphStyle("bold9", parent=normal, fontSize=9, fontName="Helvetica-Bold")
+    right9 = ParagraphStyle("right9", parent=normal, fontSize=9, alignment=TA_RIGHT)
+    brand  = ParagraphStyle("brand", parent=normal, fontSize=11, fontName="Helvetica-Bold",
+                             textColor=colors.HexColor("#7c3aed"))
+
+    story = []
+
+    # ── Header row: title left, logo right ──────────────────────────────────
+    try:
+        logo_bytes = base64.b64decode(EKKO_LOGO_B64)
+        logo_img   = Image(io.BytesIO(logo_bytes), width=14*mm, height=14*mm)
+    except Exception:
+        logo_img   = Paragraph("", normal)
+
+    title_text = "Invoice" if doc_type == "invoice" else "Receipt"
+    header_data = [[Paragraph(title_text, h1), logo_img]]
+    header_tbl  = Table(header_data, colWidths=["85%", "15%"])
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",  (1, 0), (1, 0),  "RIGHT"),
+    ]))
+    story.append(header_tbl)
+    story.append(Spacer(1, 4*mm))
+
+    # ── Meta info ────────────────────────────────────────────────────────────
+    today = datetime.utcnow().strftime("%B %d, %Y")
+    meta_lines = [
+        f"Invoice number   {invoice_number}",
+        f"Receipt number   {receipt_number}",
+        f"Date paid        {today}",
+    ] if doc_type == "receipt" else [
+        f"Invoice number   {invoice_number}",
+        f"Date of issue    {today}",
+        f"Date due         {today}",
+    ]
+    for line in meta_lines:
+        story.append(Paragraph(line, small))
+    story.append(Spacer(1, 6*mm))
+
+    # ── From / Bill to ────────────────────────────────────────────────────────
+    from_to_data = [[
+        Paragraph("<b>Ekko</b><br/>ekko.app<br/>support@ekko.app", small),
+        Paragraph(f"<b>Bill to</b><br/>{customer_email}", small),
+    ]]
+    ft_tbl = Table(from_to_data, colWidths=["50%", "50%"])
+    ft_tbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(ft_tbl)
+    story.append(Spacer(1, 6*mm))
+
+    # ── Amount summary ────────────────────────────────────────────────────────
+    plan_label  = plan.capitalize()
+    amount_str  = f"${amount:,.2f}"
+    if doc_type == "invoice":
+        story.append(Paragraph(f"{amount_str} USD due {today}", bold9))
     else:
+        story.append(Paragraph(f"{amount_str} paid on {today}", bold9))
+    story.append(Spacer(1, 4*mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
+    story.append(Spacer(1, 4*mm))
+
+    # ── Line items table ──────────────────────────────────────────────────────
+    tbl_header = [
+        Paragraph("<b>Description</b>", bold9),
+        Paragraph("<b>Qty</b>", bold9),
+        Paragraph("<b>Unit price</b>", bold9),
+        Paragraph("<b>Amount</b>", bold9),
+    ]
+    tbl_row = [
+        Paragraph(f"{plan_label}<br/><font size=8 color='#666666'>{period_start}–{period_end}</font>", small),
+        Paragraph("1", small),
+        Paragraph(amount_str, small),
+        Paragraph(amount_str, small),
+    ]
+    items_tbl = Table([tbl_header, tbl_row], colWidths=["50%", "10%", "20%", "20%"])
+    items_tbl.setStyle(TableStyle([
+        ("LINEBELOW",  (0, 0), (-1, 0), 0.5, colors.HexColor("#cccccc")),
+        ("VALIGN",     (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(items_tbl)
+    story.append(Spacer(1, 4*mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
+    story.append(Spacer(1, 2*mm))
+
+    # ── Totals ────────────────────────────────────────────────────────────────
+    label_key = "Amount due" if doc_type == "invoice" else "Amount paid"
+    for label, val in [("Subtotal", amount_str), ("Total", amount_str), (label_key, amount_str)]:
+        is_last = label == label_key
+        row_style = bold9 if is_last else small
+        totals_row = Table([[
+            Paragraph(f"<b>{label}</b>" if is_last else label, row_style),
+            Paragraph(f"<b>{val}</b>" if is_last else val, right9),
+        ]], colWidths=["70%", "30%"])
+        totals_row.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        story.append(totals_row)
+
+    story.append(Spacer(1, 8*mm))
+
+    # ── Payment history (receipt only) ────────────────────────────────────────
+    if doc_type == "receipt":
+        story.append(Paragraph("<b>Payment history</b>", bold9))
+        story.append(Spacer(1, 3*mm))
+        ph_header = [
+            Paragraph("<b>Payment method</b>", small),
+            Paragraph("<b>Date</b>", small),
+            Paragraph("<b>Amount paid</b>", small),
+            Paragraph("<b>Receipt number</b>", small),
+        ]
+        ph_row = [
+            Paragraph("Card on file", small),
+            Paragraph(today, small),
+            Paragraph(amount_str, small),
+            Paragraph(receipt_number, small),
+        ]
+        ph_tbl = Table([ph_header, ph_row], colWidths=["30%", "20%", "25%", "25%"])
+        ph_tbl.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.HexColor("#cccccc")),
+            ("VALIGN",    (0, 0), (-1, -1), "TOP"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(ph_tbl)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 12*mm))
+    story.append(Paragraph("Questions? Contact us at <link href='mailto:support@ekko.app'>support@ekko.app</link>", small))
+    story.append(Spacer(1, 4*mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#eeeeee")))
+    story.append(Spacer(1, 2*mm))
+    story.append(Paragraph("Page 1 of 1", ParagraphStyle("footer", parent=small, alignment=TA_RIGHT)))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _send_receipt_email(email: str, plan: str, amount: float,
+                        invoice_number: str, receipt_number: str,
+                        period_start: str, period_end: str) -> None:
+    """Send a branded receipt email with invoice + receipt PDFs attached."""
+    if not resend or not RESEND_API_KEY:
+        print("[ekko] Resend not installed or RESEND_API_KEY not set — skipping receipt email")
+        return
+
+    plan_label  = plan.capitalize()
+    amount_str  = f"${amount:,.2f}"
+
+    invoice_pdf = _build_pdf("invoice", invoice_number, receipt_number, email,
+                             plan, amount, period_start, period_end)
+    receipt_pdf = _build_pdf("receipt", invoice_number, receipt_number, email,
+                             plan, amount, period_start, period_end)
+
+    html_body = f"""
+    <div style="font-family:sans-serif;max-width:560px;margin:auto;color:#1a1a2e;">
+      <div style="text-align:center;padding:32px 0 16px;">
+        <span style="font-size:28px;font-weight:800;background:linear-gradient(130deg,#a78bfa,#60a5fa);
+              -webkit-background-clip:text;-webkit-text-fill-color:transparent;">Ekko</span>
+      </div>
+      <div style="background:#f8f7ff;border-radius:12px;padding:28px 32px;">
+        <h2 style="margin:0 0 8px;font-size:20px;">Payment confirmed ✓</h2>
+        <p style="color:#555;margin:0 0 20px;">
+          Thanks for subscribing to Ekko <strong>{plan_label}</strong>!
+          Your music journey continues.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <tr>
+            <td style="padding:8px 0;color:#888;">Plan</td>
+            <td style="padding:8px 0;text-align:right;font-weight:600;">{plan_label}</td>
+          </tr>
+          <tr style="border-top:1px solid #e0e0e0;">
+            <td style="padding:8px 0;color:#888;">Amount paid</td>
+            <td style="padding:8px 0;text-align:right;font-weight:600;">{amount_str}/mo</td>
+          </tr>
+          <tr style="border-top:1px solid #e0e0e0;">
+            <td style="padding:8px 0;color:#888;">Billing period</td>
+            <td style="padding:8px 0;text-align:right;">{period_start} – {period_end}</td>
+          </tr>
+          <tr style="border-top:1px solid #e0e0e0;">
+            <td style="padding:8px 0;color:#888;">Invoice number</td>
+            <td style="padding:8px 0;text-align:right;font-size:12px;color:#555;">{invoice_number}</td>
+          </tr>
+          <tr style="border-top:1px solid #e0e0e0;">
+            <td style="padding:8px 0;color:#888;">Receipt number</td>
+            <td style="padding:8px 0;text-align:right;font-size:12px;color:#555;">{receipt_number}</td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0;font-size:13px;color:#888;">
+          Your invoice and receipt are attached as PDFs below.
+        </p>
+      </div>
+      <p style="text-align:center;font-size:12px;color:#aaa;margin-top:24px;">
+        Questions? <a href="mailto:support@ekko.app" style="color:#7c3aed;">support@ekko.app</a>
+      </p>
+    </div>
+    """
+
+    resend.Emails.send({
+        "from":    RESEND_FROM,
+        "to":      [email],
+        "subject": f"Your Ekko {plan_label} receipt – {receipt_number}",
+        "html":    html_body,
+        "attachments": [
+            {
+                "filename": f"Invoice-{invoice_number}.pdf",
+                "content":  list(invoice_pdf),
+            },
+            {
+                "filename": f"Receipt-{receipt_number}.pdf",
+                "content":  list(receipt_pdf),
+            },
+        ],
+    })
+    print(f"[ekko] Receipt email sent to {email}")
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+
+@router.post("/checkout")
+async def create_checkout(body: CheckoutRequest):
+    plan = body.plan.lower()
+    if plan not in PLAN_PRICE_IDS:
         raise HTTPException(status_code=400, detail="Invalid plan")
 
-    # fetch profile to see if we have a customer id
-    profile_q = supabase.from_("profiles").select("stripe_customer_id").eq("id", req.user_id).single().execute()
-    profile = profile_q.data
-    customer_id = profile.get("stripe_customer_id") if profile else None
+    customer_id = _get_or_create_stripe_customer(body.user_id, body.email)
 
-    try:
-        if not customer_id:
-            cust = stripe.Customer.create(email=req.email, metadata={"supabase_id": req.user_id})
-            customer_id = cust.id
-            await supabase.from_("profiles").update({"stripe_customer_id": customer_id}).eq("id", req.user_id).execute()
-
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            customer=customer_id,
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url=f"{FRONTEND_URL}/?billing=success",
-            cancel_url=f"{FRONTEND_URL}/?billing=canceled",
+    # ── Block if user already has an active subscription for this plan ────────
+    if _active_subscription_for_plan(customer_id, plan):
+        raise HTTPException(
+            status_code=409,
+            detail=f"You already have an active {plan.capitalize()} subscription."
         )
-        return JSONResponse({"url": session.url})
-    except Exception as e:
-        print("[stripe] create_checkout error:", e)
-        raise HTTPException(status_code=500, detail="Failed to create checkout session")
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": PLAN_PRICE_IDS[plan], "quantity": 1}],
+        mode="subscription",
+        success_url=f"{FRONTEND_URL}?subscribed=true&plan={plan}",
+        cancel_url=f"{FRONTEND_URL}?subscribed=false",
+        metadata={"user_id": body.user_id, "plan": plan},
+    )
+    return {"url": session.url}
 
 
-# ── POST /stripe/create-portal ────────────────────────────────
-@router.post("/create-portal")
-async def create_portal(req: PortalRequest):
-    supabase = _get_supabase()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-
-    profile_q = supabase.from_("profiles").select("stripe_customer_id").eq("id", req.user_id).single().execute()
-    profile = profile_q.data
-    customer_id = profile.get("stripe_customer_id") if profile else None
-    if not customer_id:
-        raise HTTPException(status_code=400, detail="No Stripe customer for user")
-
-    try:
-        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{FRONTEND_URL}/billing")
-        return JSONResponse({"url": portal.url})
-    except Exception as e:
-        print("[stripe] create_portal error:", e)
-        raise HTTPException(status_code=500, detail="Failed to create billing portal session")
+@router.post("/portal")
+async def create_portal(body: PortalRequest):
+    row = supabase.table("profiles").select("stripe_customer_id").eq("id", body.user_id).single().execute()
+    cid = (row.data or {}).get("stripe_customer_id")
+    if not cid:
+        raise HTTPException(status_code=404, detail="No billing account found.")
+    session = stripe.billing_portal.Session.create(
+        customer=cid,
+        return_url=FRONTEND_URL,
+    )
+    return {"url": session.url}
 
 
-# ── POST /stripe/webhook ──────────────────────────────────────
 @router.post("/webhook")
-async def stripe_webhook(
-    request: Request,
-    stripe_signature: str = Header(None, alias="stripe-signature"),
-):
-    supabase = _get_supabase()
-    payload = await request.body()
-
-    if not WEBHOOK_SECRET:
-        # If webhook secret not set, try to parse without verifying (dev only)
-        try:
-            event = json.loads(payload)
-        except Exception as e:
-            print("[stripe] webhook parse failed:", e)
-            raise HTTPException(status_code=400, detail="Invalid payload")
-    else:
-        try:
-            event = stripe.Webhook.construct_event(payload, stripe_signature, WEBHOOK_SECRET)
-        except Exception as e:
-            print("[stripe] Webhook signature verification failed:", e)
-            raise HTTPException(status_code=400, detail="Webhook signature verification failed")
-
-    etype = event.get("type")
-    data = event.get("data", {}).get("object", {})
+async def stripe_webhook(request: Request):
+    payload    = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
     try:
-        # Checkout completed → subscription created (store subscription on profile)
-        if etype == "checkout.session.completed":
-            session = data
-            customer_id = session.get("customer")
-            subscription_id = session.get("subscription")
-            if subscription_id and customer_id and supabase:
-                sub = stripe.Subscription.retrieve(subscription_id)
-                plan_price = sub["items"]["data"][0]["price"]["id"] if sub["items"]["data"] else ""
-                plan = PRICE_TO_PLAN.get(plan_price, plan_price)
-                period_end = datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc).isoformat() if sub.current_period_end else None
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
-                # find profile by stripe_customer_id
-                prof_q = supabase.from_("profiles").select("id,email").eq("stripe_customer_id", customer_id).limit(1).execute()
-                prof = prof_q.data[0] if prof_q and prof_q.data else None
-                if prof:
-                    await supabase.from_("profiles").update({
-                        "stripe_subscription_id": sub.id,
-                        "plan": plan,
-                        "plan_status": sub.status,
-                        "plan_latest_period_end": period_end
-                    }).eq("id", prof["id"]).execute()
+    etype = event["type"]
+    data  = event["data"]["object"]
 
-                    # optionally send a custom receipt email (best-effort)
-                    invoice_url = ""
-                    try:
-                        invoices = stripe.Invoice.list(subscription=sub.id, limit=1)
-                        if invoices and invoices.data:
-                            invoice_url = invoices.data[0].hosted_invoice_url or ""
-                            amount = (invoices.data[0].amount_paid or 0) / 100.0
-                            currency = invoices.data[0].currency or "usd"
-                            _send_receipt_email(prof.get("email", ""), prof.get("email", ""), plan, amount, currency, invoice_url, period_end or "")
-                    except Exception:
-                        pass
+    # ── Subscription activated ────────────────────────────────────────────────
+    if etype == "checkout.session.completed":
+        user_id = data.get("metadata", {}).get("user_id")
+        plan    = data.get("metadata", {}).get("plan", "groove")
+        if user_id:
+            supabase.table("profiles").update({
+                "plan":                  plan,
+                "plan_status":           "active",
+                "stripe_subscription_id": data.get("subscription"),
+            }).eq("id", user_id).execute()
 
-        # Subscription updated/cancelled → sync status
-        if etype in ("customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_succeeded", "invoice.payment_failed"):
-            # try to find subscription id or customer and update profile accordingly
-            sub = data if data.get("object") == "subscription" or etype.startswith("customer.subscription") else None
-            subscription_id = sub.get("id") if sub else data.get("subscription") or data.get("id")
-            # retrieve subscription when possible
+    # ── Subscription updated ──────────────────────────────────────────────────
+    elif etype == "customer.subscription.updated":
+        cid = data.get("customer")
+        row = supabase.table("profiles").select("id").eq("stripe_customer_id", cid).maybe_single().execute()
+        if row.data:
+            supabase.table("profiles").update({
+                "plan_status":           data["status"],
+                "plan_latest_period_end": data.get("current_period_end"),
+            }).eq("id", row.data["id"]).execute()
+
+    # ── Subscription cancelled ────────────────────────────────────────────────
+    elif etype == "customer.subscription.deleted":
+        cid = data.get("customer")
+        row = supabase.table("profiles").select("id").eq("stripe_customer_id", cid).maybe_single().execute()
+        if row.data:
+            supabase.table("profiles").update({
+                "plan": "free", "plan_status": "cancelled",
+            }).eq("id", row.data["id"]).execute()
+
+    # ── Payment succeeded → send branded receipt email with PDFs ─────────────
+    elif etype == "invoice.payment_succeeded":
+        customer_email = data.get("customer_email") or ""
+        invoice_number = data.get("number") or f"INV-{data['id'][-8:].upper()}"
+        receipt_number = data.get("receipt_number") or f"RCP-{data['id'][-8:].upper()}"
+
+        # period from the first line item
+        lines        = data.get("lines", {}).get("data", [])
+        period_start = period_end = ""
+        amount_paid  = (data.get("amount_paid") or 0) / 100
+        plan         = "groove"
+
+        if lines:
+            period_start = datetime.utcfromtimestamp(lines[0]["period"]["start"]).strftime("%b %d, %Y")
+            period_end   = datetime.utcfromtimestamp(lines[0]["period"]["end"]).strftime("%b %d, %Y")
+            # Try to detect plan from price id
+            price_id = lines[0].get("price", {}).get("id", "")
+            if price_id == PLAN_PRICE_IDS.get("studio"):
+                plan = "studio"
+
+        if customer_email:
             try:
-                if subscription_id:
-                    subscription = stripe.Subscription.retrieve(subscription_id)
-                    # find profile by stripe_customer_id
-                    customer_id = subscription.customer
-                    prof_q = supabase.from_("profiles").select("id").eq("stripe_customer_id", customer_id).limit(1).execute()
-                    prof = prof_q.data[0] if prof_q and prof_q.data else None
-                    if prof:
-                        plan_price = subscription["items"]["data"][0]["price"]["id"] if subscription["items"]["data"] else ""
-                        plan = PRICE_TO_PLAN.get(plan_price, plan_price)
-                        period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc).isoformat() if subscription.current_period_end else None
-                        await supabase.from_("profiles").update({
-                            "stripe_subscription_id": subscription.id,
-                            "plan": plan,
-                            "plan_status": subscription.status,
-                            "plan_latest_period_end": period_end
-                        }).eq("id", prof["id"]).execute()
+                _send_receipt_email(
+                    customer_email, plan, amount_paid,
+                    invoice_number, receipt_number,
+                    period_start, period_end,
+                )
             except Exception as e:
-                print("[stripe] failed to sync subscription event:", e)
+                print(f"[ekko] Receipt email failed: {e}")
 
-    except Exception as e:
-        print("[stripe] webhook handler error:", e)
+    # ── Payment failed ────────────────────────────────────────────────────────
+    elif etype in ("invoice.payment_failed", "invoice.payment_action_required"):
+        cid = data.get("customer")
+        row = supabase.table("profiles").select("id").eq("stripe_customer_id", cid).maybe_single().execute()
+        if row.data:
+            supabase.table("profiles").update({"plan_status": "past_due"}).eq("id", row.data["id"]).execute()
 
-    return JSONResponse({"received": True})
-
-
-# ── GET /stripe/status/{user_id} ──────────────────────────────
-@router.get("/status/{user_id}")
-async def get_status(user_id: str):
-    supabase = _get_supabase()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    res = supabase.from_("profiles").select("plan,plan_status,plan_latest_period_end,stripe_subscription_id,stripe_customer_id").eq("id", user_id).single().execute()
-    if not res or not res.data:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return JSONResponse(res.data)
+    return JSONResponse({"status": "ok"})

@@ -20,27 +20,51 @@ const SCALES = [
   { id: 'B minor', label: 'B Minor', feel: 'Dark & deep'     },
 ]
 
-export default function CoCreation({ mood, regionDefaults, region, onGenerate }) {
-  const [tempo, setTempo]             = useState(mood?.energy > 0.5 ? 110 : 72)
-  const [selectedScale, setScale]     = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
-  const [selectedInstr, setInstr]     = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
+// Which language codes are "Arabic-family" — match Arabic region artists
+const ARABIC_CODES   = new Set(['ar', 'ar-eg', 'ar-lv', 'ar-gulf', 'ar-ma'])
+const HINDI_CODES    = new Set(['hi', 'ta', 'te', 'bn'])
+const EASTASIA_CODES = new Set(['zh', 'ja', 'ko'])
+const LATIN_CODES    = new Set(['es', 'pt'])
+const EUROPE_CODES   = new Set(['fr', 'de', 'it', 'en'])
+const AFRICA_CODES   = new Set(['yo', 'ha', 'pcm', 'wo'])
+
+// Given the selected language code, return which region's artist list fits best.
+// Falls back to 'global' for English or anything unrecognised.
+function bestRegionForLanguage(langCode, currentRegion) {
+  if (!langCode) return currentRegion || 'global'
+  if (ARABIC_CODES.has(langCode))   return 'arabic'
+  if (HINDI_CODES.has(langCode))    return 'india'
+  if (EASTASIA_CODES.has(langCode)) return 'east_asia'
+  if (LATIN_CODES.has(langCode))    return 'latin'
+  if (AFRICA_CODES.has(langCode))   return 'west_africa'
+  // English or European — use 'global' artists which are all English-friendly,
+  // unless the current region is europe (keep europe artists for European langs)
+  if (EUROPE_CODES.has(langCode) && langCode !== 'en') return 'europe'
+  return 'global'
+}
+
+export default function CoCreation({ mood, regionDefaults, region, language, onGenerate }) {
+  const [tempo, setTempo]               = useState(mood?.energy > 0.5 ? 110 : 72)
+  const [selectedScale, setScale]       = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
+  const [selectedInstr, setInstr]       = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
   const [artistStyles, setArtistStyles] = useState([])
-  const [selectedArtist, setArtist]   = useState('')
+  const [selectedArtist, setArtist]     = useState('')
   const [loadingStyles, setLoadingStyles] = useState(false)
 
-  // Load artist styles for this region
+  // Derive which region's artists to show based on the chosen language,
+  // not just the cultural region the user picked.
+  const artistRegion = bestRegionForLanguage(language?.code, region?.id)
+
   useEffect(() => {
-    if (!region?.id) return
+    if (!artistRegion) return
     setLoadingStyles(true)
-    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${region.id}`)
+    setArtist('') // reset whenever language changes
+    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${artistRegion}`)
       .then(r => r.json())
-      .then(data => {
-        setArtistStyles(data.styles || [])
-        setArtist('') // reset on region change
-      })
+      .then(data => setArtistStyles(data.styles || []))
       .catch(() => setArtistStyles([]))
       .finally(() => setLoadingStyles(false))
-  }, [region?.id])
+  }, [artistRegion])
 
   const toggleInstr = (id) => {
     setInstr(prev =>
@@ -68,6 +92,12 @@ export default function CoCreation({ mood, regionDefaults, region, onGenerate })
 
   const selectedArtistObj = artistStyles.find(a => a.id === selectedArtist)
 
+  // Label shown above the artist grid to explain the filtering
+  const langLabel = language?.label || ''
+  const artistSectionLabel = langLabel
+    ? `🎤 Artist Style — matching ${langLabel}`
+    : '🎤 Artist Style'
+
   return (
     <div className="cocreate">
       <div className="cc-header">
@@ -76,10 +106,10 @@ export default function CoCreation({ mood, regionDefaults, region, onGenerate })
         <p className="cc-sub">Customise your music before generating</p>
       </div>
 
-      {/* ── Artist Style ── */}
+      {/* ── Artist Style (filtered by language) ── */}
       <div className="cc-section">
         <div className="cc-section-top">
-          <span className="cc-label">🎤 Artist Style</span>
+          <span className="cc-label">{artistSectionLabel}</span>
           <span className="cc-value">
             {selectedArtistObj ? selectedArtistObj.label : 'Default style'}
           </span>
@@ -88,7 +118,6 @@ export default function CoCreation({ mood, regionDefaults, region, onGenerate })
           <div className="cc-artist-loading">Loading styles…</div>
         ) : (
           <div className="cc-artist-grid">
-            {/* None option */}
             <button
               className={`cc-artist-opt ${selectedArtist === '' ? 'sel' : ''}`}
               onClick={() => setArtist('')}
@@ -171,11 +200,11 @@ export default function CoCreation({ mood, regionDefaults, region, onGenerate })
 
       <button className="cc-cta" onClick={handleGenerate}>
         {selectedArtistObj
-          ? `Generate in ${selectedArtistObj.label} →`
+          ? `Generate in ${selectedArtistObj.label} style →`
           : 'Generate my music →'
         }
       </button>
-      <p className="cc-xp">+20 XP for co-creating</p>
+      <p className="cc-xp">+20 XP when your song is saved</p>
 
       <style>{`
         .cc-artist-grid {

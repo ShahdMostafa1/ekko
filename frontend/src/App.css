@@ -1256,6 +1256,63 @@ body {
   font-weight: 700; width: 16px; text-align: right;
 }
 
+/* subscription / billing styles */
+.subscribe-btn {
+  background: linear-gradient(90deg,#6a5cff,#8f7bff);
+  color: white;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .12s ease, opacity .12s ease;
+  box-shadow: 0 4px 12px rgba(80,64,200,0.12);
+}
+.subscribe-btn:hover { transform: translateY(-2px) }
+.subscribe-btn:active { transform: translateY(0) }
+.subscribe-btn:disabled,
+.subscribe-btn--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.billing-portal-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s ease, opacity .12s ease;
+}
+.billing-portal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.plan-badge {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+.plan-badge--active { background: linear-gradient(90deg,#00c6a7,#00b4ff); color: white; }
+.plan-badge--inactive { background: rgba(255,255,255,0.04); color: #ddd; }
+.plan-badge--loading { opacity: 0.7; font-style: italic; }
+/* make header buttons compact on small screens */
+@media (max-width: 760px) {
+  .ekko-header .xp-chip { display:none }
+  .subscribe-btn, .billing-portal-btn { padding:6px 8px; font-size:13px }
+}
+
 /* ════════════════════════════════════════════════════════════
    RESPONSIVE
    ════════════════════════════════════════════════════════════ */
