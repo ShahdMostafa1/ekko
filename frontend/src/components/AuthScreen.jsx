@@ -21,6 +21,9 @@ export default function AuthScreen({ onAuth }) {
   const [resending, setResending] = useState(false)
   const [resent, setResent]       = useState(false)
 
+  // Forgot password states
+  const [resetSent, setResetSent] = useState(false)
+
   const checks    = PASSWORD_RULES.map(r => ({ ...r, ok: r.test(password) }))
   const allPassed = checks.every(c => c.ok)
 
@@ -51,19 +54,13 @@ export default function AuthScreen({ onAuth }) {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            emailRedirectTo: window.location.origin,
-          },
+          options: { emailRedirectTo: window.location.origin },
         })
         if (signUpError) throw signUpError
 
-        // Supabase returns a fake session even before confirmation
-        // Check if the user is already confirmed (shouldn't be on first signup)
         if (data.user && !data.user.email_confirmed_at) {
-          // Show "check your email" screen
           setAwaitingConfirm(true)
         } else if (data.user && data.session) {
-          // Edge case: email confirmations disabled in Supabase settings
           const { data: profile } = await supabase
             .from('profiles').select('*').eq('id', data.user.id).single()
           onAuth({ user: data.user, session: data.session, profile })
@@ -75,7 +72,6 @@ export default function AuthScreen({ onAuth }) {
           password,
         })
         if (signInError) {
-          // Intercept "Email not confirmed" and show a helpful message
           if (signInError.message?.toLowerCase().includes('email not confirmed')) {
             setAwaitingConfirm(true)
             return
@@ -117,6 +113,34 @@ export default function AuthScreen({ onAuth }) {
       provider: 'google',
       options: { redirectTo: window.location.origin },
     })
+  }
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Please enter your email address first.')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}?reset=true`,
+      })
+      if (resetError) throw resetError
+      setResetSent(true)
+    } catch (err) {
+      setError(err.message || 'Failed to send reset email. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const goBackToLogin = () => {
+    setMode('login')
+    setResetSent(false)
+    setError(null)
+    setPass('')
+    setPwFocused(false)
   }
 
   const showRules = mode === 'register' && (pwFocused || password.length > 0)
@@ -191,6 +215,106 @@ export default function AuthScreen({ onAuth }) {
           >
             Back to sign in
           </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Forgot password screen ────────────────────────────────────────────
+  if (mode === 'forgotPassword') {
+    return (
+      <div style={{
+        minHeight: '100vh', width: '100%',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '24px 16px', boxSizing: 'border-box',
+      }}>
+        <div className="auth-logo">EKKO</div>
+
+        <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
+
+          {resetSent ? (
+            // ── Success state ──
+            <>
+              <div style={{ fontSize: 52, lineHeight: 1 }}>📬</div>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+                  Reset link sent!
+                </h2>
+                <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
+                  We sent a password reset link to
+                </p>
+                <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
+                  {email}
+                </p>
+              </div>
+
+              <div style={{
+                background: 'rgba(124,92,231,0.06)',
+                border: '1px solid rgba(124,92,231,0.15)',
+                borderRadius: 12, padding: '14px 16px',
+                fontSize: 13, color: 'var(--text3)', lineHeight: 1.7,
+                textAlign: 'left',
+              }}>
+                <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>What to do:</p>
+                <p style={{ margin: 0 }}>
+                  1. Open the email from Ekko<br />
+                  2. Click the <strong style={{ color: 'var(--purple-l)' }}>Reset password</strong> link<br />
+                  3. Choose a new password and sign in
+                </p>
+              </div>
+
+              <button className="auth-cta" onClick={goBackToLogin}>
+                Back to sign in
+              </button>
+            </>
+          ) : (
+            // ── Enter email state ──
+            <>
+              <div style={{ fontSize: 52, lineHeight: 1 }}>🔑</div>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+                  Forgot your password?
+                </h2>
+                <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
+                  No worries — enter your email and we'll send you a reset link.
+                </p>
+              </div>
+
+              <input
+                className="auth-input"
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleForgotPassword()}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+
+              {error && <p className="auth-error">{error}</p>}
+
+              <button
+                className="auth-cta"
+                onClick={handleForgotPassword}
+                disabled={loading || !email}
+                style={{ opacity: loading || !email ? 0.6 : 1 }}
+              >
+                {loading ? 'Sending…' : 'Send reset link'}
+              </button>
+
+              <button
+                onClick={goBackToLogin}
+                style={{
+                  background: 'none', border: 'none',
+                  color: 'var(--text3)', fontSize: 13,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  textDecoration: 'underline',
+                }}
+              >
+                Back to sign in
+              </button>
+            </>
+          )}
         </div>
       </div>
     )
@@ -271,6 +395,28 @@ export default function AuthScreen({ onAuth }) {
             )}
           </button>
         </div>
+
+        {/* Forgot password link — only on login mode */}
+        {mode === 'login' && (
+          <div style={{ width: '100%', textAlign: 'right', marginTop: -4 }}>
+            <button
+              onClick={() => {
+                setMode('forgotPassword')
+                setError(null)
+                setResetSent(false)
+              }}
+              style={{
+                background: 'none', border: 'none',
+                color: 'var(--purple-l)', fontSize: 13,
+                cursor: 'pointer', fontFamily: 'inherit',
+                textDecoration: 'none', fontWeight: 500,
+                padding: 0,
+              }}
+            >
+              Forgot password?
+            </button>
+          </div>
+        )}
 
         {/* Password strength checklist */}
         {showRules && (
