@@ -36,7 +36,7 @@ PLAN_AMOUNTS = {"groove": 9.00, "studio": 19.00}
 
 EKKO_LOGO_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAYAAAA5ZDbSAAB4LElEQVR4nNT9d5ylWVXvj7/33k84"
-    "+VSO3dXd1XE6zHRPzoGBYUgDDAxJYERUjFwVUdSrCCoXUUSCosQLKGGGMDDEASYyOfSEzjlUV1eu"
+    "+VSO3dXd1XE6zHRPzoGBYUgDDAxJYERUjFwVUdSrCCoXUUSCosQLKGGGMDDEASYyOfSGzjlUV1eu"
     "OvlJe+/fH89TPaNfw9WrXn/n9apXV1edc+qcs96913xnr732enxf1iHLmmRZC5N3KcZGHaOjo5JS"
     "YYWQ3CCujBLX1xBX16BKbhh9aXYvi1NP0Jx+ml5rv++4dGrdxeBd0VtRtPEKvEIqeMGTAcCyT6Uh"
     "MNZYO1TiWAe2v2S8cUvZe5rBhTQiCVQIWOIqp9lQgbsa7iXKV9eTCcq9hhPTg9wdBZaKhbxCKl9"
@@ -84,7 +84,6 @@ def _get_active_subscriptions(customer_id: str) -> list:
             expand=["data.items.data.price"]
         )
         for sub in subs.auto_paging_iter():
-            # Skip subscriptions that are set to cancel at period end
             if sub.get("cancel_at_period_end", False):
                 continue
             for item in sub["items"]["data"]:
@@ -152,7 +151,7 @@ def _build_pdf(doc_type: str, invoice_number: str, receipt_number: str,
     story = []
 
     logo_img = Paragraph("<b>Ekko</b>", h1)
-    
+
     title_text  = "Invoice" if doc_type == "invoice" else "Receipt"
     header_data = [[Paragraph(title_text, h1), logo_img]]
     header_tbl  = Table(header_data, colWidths=["85%", "15%"])
@@ -325,20 +324,28 @@ def _send_receipt_email(email: str, plan: str, amount: float,
     </div>
     """
 
-    resend.Emails.send({
+    # ── FIXED: resend SDK v2 requires base64-encoded string for attachments ──
+    params = {
         "from":    RESEND_FROM,
         "to":      [email],
         "subject": f"Your Ekko {plan_label} receipt – {receipt_number}",
         "html":    html_body,
         "attachments": [
-            {"filename": f"Invoice-{invoice_number}.pdf", "content": list(invoice_pdf)},
-            {"filename": f"Receipt-{receipt_number}.pdf", "content": list(receipt_pdf)},
+            {
+                "filename": f"Invoice-{invoice_number}.pdf",
+                "content":  base64.b64encode(invoice_pdf).decode("utf-8"),
+            },
+            {
+                "filename": f"Receipt-{receipt_number}.pdf",
+                "content":  base64.b64encode(receipt_pdf).decode("utf-8"),
+            },
         ],
-    })
+    }
+    resend.Emails.send(params)
     print(f"[ekko] Receipt email sent to {email}")
 
 
-# ── NEW: subscription status endpoint ──────────────────────────────────────────
+# ── subscription status endpoint ───────────────────────────────────────────────
 @router.get("/status/{user_id}")
 async def get_subscription_status(user_id: str):
     """
@@ -354,14 +361,12 @@ async def get_subscription_status(user_id: str):
     status  = profile.get("plan_status", "inactive")
     cid     = profile.get("stripe_customer_id")
 
-    # If we have a Stripe customer, verify real-time subscription state
     cancel_at_period_end = False
     if cid and plan != "free":
         try:
             subs = stripe.Subscription.list(customer=cid, status="active")
             active_subs = list(subs.auto_paging_iter())
             if not active_subs:
-                # Check if any are cancelling (cancel_at_period_end=true)
                 all_subs = stripe.Subscription.list(customer=cid)
                 cancelling = [s for s in all_subs.auto_paging_iter()
                               if s.get("cancel_at_period_end")]
@@ -369,7 +374,6 @@ async def get_subscription_status(user_id: str):
                     cancel_at_period_end = True
                     status = "cancelling"
                 else:
-                    # All truly cancelled — sync DB
                     status = "cancelled"
                     supabase.table("profiles").update(
                         {"plan": "free", "plan_status": "cancelled"}
@@ -392,7 +396,7 @@ async def get_subscription_status(user_id: str):
     }
 
 
-# ── NEW: invoice list endpoint ─────────────────────────────────────────────────
+# ── invoice list endpoint ──────────────────────────────────────────────────────
 @router.get("/invoices/{user_id}")
 async def get_invoices(user_id: str):
     """Returns list of paid invoices for download."""
@@ -404,7 +408,7 @@ async def get_invoices(user_id: str):
     return {"invoices": invoices}
 
 
-# ── NEW: download invoice PDF endpoint ────────────────────────────────────────
+# ── download invoice PDF endpoint ──────────────────────────────────────────────
 @router.get("/invoice-pdf/{user_id}/{invoice_id}")
 async def download_invoice_pdf(user_id: str, invoice_id: str):
     """Generate and return invoice PDF for download."""
@@ -449,7 +453,7 @@ async def download_invoice_pdf(user_id: str, invoice_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/create-checkout")  # alias for older frontend builds
+@router.post("/create-checkout")
 @router.post("/checkout")
 async def create_checkout(body: CheckoutRequest):
     plan = body.plan.lower()
@@ -476,7 +480,7 @@ async def create_checkout(body: CheckoutRequest):
     return {"url": session.url}
 
 
-@router.post("/create-portal")   # alias for older frontend builds
+@router.post("/create-portal")
 @router.post("/portal")
 async def create_portal(body: PortalRequest):
     row = supabase.table("profiles").select("stripe_customer_id").eq("id", body.user_id).single().execute()
@@ -515,7 +519,6 @@ async def stripe_webhook(request: Request):
         row = supabase.table("profiles").select("id").eq("stripe_customer_id", cid).maybe_single().execute()
         if row.data:
             new_status = data["status"]
-            # If cancelling at period end, mark as "cancelling" not "cancelled"
             if data.get("cancel_at_period_end"):
                 new_status = "cancelling"
             supabase.table("profiles").update({
@@ -547,7 +550,6 @@ async def stripe_webhook(request: Request):
             if price_id == PLAN_PRICE_IDS.get("studio"):
                 plan = "studio"
 
-        # Only send for actual subscription payments (amount > 0)
         if customer_email and amount_paid > 0:
             try:
                 _send_receipt_email(customer_email, plan, amount_paid,
