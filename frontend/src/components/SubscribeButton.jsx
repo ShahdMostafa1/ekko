@@ -1,20 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
-/**
- * SubscribeButton
- * Props:
- *   plan       — 'groove' | 'studio'
- *   userId     — current user id
- *   email      — current user email
- *   currentPlan — optional override; if not passed, fetched from DB
- *   onSuccess  — called after successful checkout redirect
- */
 export default function SubscribeButton({ plan, userId, email, currentPlan, onSuccess, children }) {
-  const [loading, setLoading]         = useState(false)
-  const [activePlan, setActivePlan]   = useState(currentPlan || null)
+  const [loading, setLoading]       = useState(false)
+  const [activePlan, setActivePlan] = useState(currentPlan || null)
 
-  // If currentPlan not passed as prop, fetch it from profiles
   useEffect(() => {
     if (currentPlan !== undefined) {
       setActivePlan(currentPlan)
@@ -43,7 +33,6 @@ export default function SubscribeButton({ plan, userId, email, currentPlan, onSu
       alert(`You're already on a higher plan (Studio). Visit Billing to manage your subscription.`)
       return
     }
-
     setLoading(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -55,6 +44,10 @@ export default function SubscribeButton({ plan, userId, email, currentPlan, onSu
         },
         body: JSON.stringify({ plan, user_id: userId, email }),
       })
+      if (res.status === 409) {
+        alert(`You already have an active ${plan.charAt(0).toUpperCase() + plan.slice(1)} subscription!`)
+        return
+      }
       const data = await res.json()
       if (data.url) {
         onSuccess?.()
@@ -70,12 +63,11 @@ export default function SubscribeButton({ plan, userId, email, currentPlan, onSu
     }
   }
 
-  // Style variants
   const isPrimary = plan === 'studio'
   const label = isCurrentPlan
-    ? `✓ Current Plan`
+    ? '✓ Current Plan'
     : isHigherPlan
-    ? `✓ On Studio`
+    ? '✓ On Studio'
     : loading
     ? 'Loading…'
     : children || `Subscribe: ${plan.charAt(0).toUpperCase() + plan.slice(1)}`

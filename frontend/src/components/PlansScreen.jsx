@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 
-const API      = import.meta.env.VITE_API_URL;
-const APP_URL  = typeof window !== "undefined" ? window.location.origin : "";
+const API = import.meta.env.VITE_API_URL;
 
-// ── Plans — matches your backend exactly: 'groove' | 'studio' ──
 const PLANS = [
   {
     id:       "free",
@@ -20,11 +18,11 @@ const PLANS = [
     ],
   },
   {
-    id:       "groove",
-    name:     "Groove",
-    price:    "$9",
-    period:   "/ month",
-    color:    "#7c5ce7",
+    id:        "groove",
+    name:      "Groove",
+    price:     "$9",
+    period:    "/ month",
+    color:     "#7c5ce7",
     highlight: true,
     features: [
       "50 song generations / day",
@@ -55,17 +53,22 @@ const PLANS = [
 export default function PlansScreen({ onClose }) {
   const [user,          setUser]          = useState(null);
   const [subscription,  setSubscription]  = useState(null);
+  const [invoices,      setInvoices]      = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   const [error,         setError]         = useState(null);
   const [successMsg,    setSuccessMsg]    = useState(null);
+  const [showInvoices,  setShowInvoices]  = useState(false);
 
   // ── Load user + subscription ──────────────────────────────
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
-      if (user) await fetchSub(user.id);
+      if (user) {
+        await fetchSub(user.id);
+        await fetchInvoices(user.id);
+      }
       setLoading(false);
     })();
   }, []);
@@ -74,13 +77,17 @@ export default function PlansScreen({ onClose }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("payment") === "success") {
-      setSuccessMsg("🎉 Payment successful! Your plan is now active.");
-      // Re-fetch after a short delay to let webhook process
+      setSuccessMsg(
+        "🎉 Payment successful! Your plan is now active. " +
+        "📧 Check your email — we've sent your invoice & receipt PDFs."
+      );
       setTimeout(async () => {
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) await fetchSub(user.id);
+        if (user) {
+          await fetchSub(user.id);
+          await fetchInvoices(user.id);
+        }
       }, 3000);
-      // Clean up URL
       window.history.replaceState({}, "", window.location.pathname);
     }
     if (params.get("payment") === "cancel") {
@@ -98,13 +105,23 @@ export default function PlansScreen({ onClose }) {
     }
   }
 
+  async function fetchInvoices(userId) {
+    try {
+      const res  = await fetch(`${API}/stripe/invoices/${userId}`);
+      const data = await res.json();
+      setInvoices(data.invoices || []);
+    } catch {
+      setInvoices([]);
+    }
+  }
+
   // ── Upgrade: redirect to Stripe Checkout ──────────────────
   async function handleUpgrade(planId) {
     if (!user || planId === "free") return;
     setActionLoading(planId);
     setError(null);
     try {
-      const res = await fetch(`${API}/stripe/create-checkout`, {
+      const res = await fetch(`${API}/stripe/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -114,6 +131,11 @@ export default function PlansScreen({ onClose }) {
         }),
       });
       const data = await res.json();
+      if (res.status === 409) {
+        // Already subscribed — just show message, don't error
+        setSuccessMsg(`✅ You already have an active ${planId.charAt(0).toUpperCase() + planId.slice(1)} subscription!`);
+        return;
+      }
       if (data.url) {
         window.location.href = data.url;
       } else {
@@ -132,7 +154,7 @@ export default function PlansScreen({ onClose }) {
     setActionLoading("portal");
     setError(null);
     try {
-      const res = await fetch(`${API}/stripe/create-portal`, {
+      const res = await fetch(`${API}/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user.id }),
@@ -147,8 +169,32 @@ export default function PlansScreen({ onClose }) {
     }
   }
 
-  const currentPlan = subscription?.plan   ?? "free";
-  const isActive    = subscription?.status === "active";
+  // ── Download invoice PDF ───────────────────────────────────
+  async function handleDownloadInvoice(invoiceId, invoiceNumber) {
+    if (!user) return;
+    setActionLoading(`inv-${invoiceId}`);
+    try {
+      const res = await fetch(`${API}/stripe/invoice-pdf/${user.id}/${invoiceId}`);
+      if (!res.ok) throw new Error("Failed to generate PDF");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `Invoice-${invoiceNumber}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Could not download invoice. Please try again.");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  const currentPlan        = subscription?.plan   ?? "free";
+  const isActive           = subscription?.status === "active" || subscription?.status === "cancelling";
+  const isCancelling       = subscription?.status === "cancelling" || subscription?.cancel_at_period_end;
+  // A plan is truly "current + working" only if active AND not cancelling
+  const isFullyActive      = subscription?.status === "active" && !isCancelling;
 
   if (loading) {
     return (
@@ -180,10 +226,9 @@ export default function PlansScreen({ onClose }) {
         )}
 
         {/* Active plan banner */}
-        {isActive && (
+        {isFullyActive && currentPlan !== "free" && (
           <div style={s.activeBadge}>
             ✅ You're on <strong>{currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong>
-            {subscription?.cancel_at_period_end && " · Cancels at period end"}
             {" · "}
             <button
               style={s.manageLink}
@@ -195,14 +240,27 @@ export default function PlansScreen({ onClose }) {
           </div>
         )}
 
+        {/* Cancelling banner — subscription ended, show re-subscribe option */}
+        {isCancelling && currentPlan !== "free" && (
+          <div style={s.cancellingBadge}>
+            ⏳ Your <strong>{currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong> plan
+            is cancelled and will end at the current billing period.
+            You can re-subscribe below when it expires.
+          </div>
+        )}
+
         {/* Error */}
         {error && <div style={s.errorBox}>{error}</div>}
 
         {/* Plan cards */}
         <div style={s.cardsRow}>
           {PLANS.map(plan => {
-            const isCurrent   = currentPlan === plan.id && (plan.id === "free" || isActive);
+            // A plan is "current" only if user is on it AND actively paying (not cancelling)
+            const isCurrent   = currentPlan === plan.id && (plan.id === "free" ? true : isFullyActive);
             const isUpgrading = actionLoading === plan.id;
+
+            // Hide upgrade button for paid plans when user has an active (non-cancelling) subscription to that plan
+            const showUpgradeBtn = !(isCurrent && plan.id !== "free");
 
             return (
               <div
@@ -215,6 +273,7 @@ export default function PlansScreen({ onClose }) {
                   boxShadow: plan.highlight
                     ? `0 0 28px ${plan.color}2a`
                     : "none",
+                  opacity: isCurrent && plan.id !== "free" ? 1 : 1,
                 }}
               >
                 {plan.highlight && (
@@ -240,38 +299,89 @@ export default function PlansScreen({ onClose }) {
                   ))}
                 </ul>
 
-                <button
-                  style={{
-                    ...s.ctaBtn,
-                    background: isCurrent
-                      ? "rgba(255,255,255,0.06)"
-                      : plan.highlight
-                        ? plan.color
-                        : "transparent",
-                    border: isCurrent
-                      ? "none"
-                      : plan.highlight
-                        ? "none"
-                        : `2px solid ${plan.color}`,
-                    color:  isCurrent ? "#6b7280" : "#fff",
-                    cursor: isCurrent ? "default"  : "pointer",
-                    opacity: isUpgrading ? 0.7 : 1,
-                  }}
-                  disabled={isCurrent || isUpgrading}
-                  onClick={() => handleUpgrade(plan.id)}
-                >
-                  {isUpgrading
-                    ? "Redirecting to Stripe…"
-                    : isCurrent
-                      ? "Current Plan"
-                      : plan.id === "free"
-                        ? "Free Forever"
-                        : `Upgrade to ${plan.name}`}
-                </button>
+                {/* Current active plan — show "Current Plan" + Manage button */}
+                {isCurrent && plan.id !== "free" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "14px" }}>
+                    <div style={{ ...s.ctaBtn, background: "rgba(255,255,255,0.06)", color: "#6b7280", textAlign: "center", border: "none" }}>
+                      ✅ Current Plan
+                    </div>
+                    <button
+                      style={{ ...s.ctaBtn, background: "transparent", border: `1px solid ${plan.color}`, color: plan.color, cursor: "pointer" }}
+                      onClick={handleManage}
+                      disabled={actionLoading === "portal"}
+                    >
+                      {actionLoading === "portal" ? "Opening…" : "Manage / Cancel"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Free plan current */}
+                {isCurrent && plan.id === "free" && (
+                  <div style={{ ...s.ctaBtn, background: "rgba(255,255,255,0.06)", color: "#6b7280", textAlign: "center", border: "none", marginTop: "14px" }}>
+                    Current Plan
+                  </div>
+                )}
+
+                {/* Upgrade button — only shown when NOT current active plan */}
+                {!isCurrent && plan.id !== "free" && (
+                  <button
+                    style={{
+                      ...s.ctaBtn,
+                      background:  plan.highlight ? plan.color : "transparent",
+                      border:      plan.highlight ? "none" : `2px solid ${plan.color}`,
+                      color:       "#fff",
+                      cursor:      isUpgrading ? "wait" : "pointer",
+                      opacity:     isUpgrading ? 0.7 : 1,
+                      marginTop:   "14px",
+                    }}
+                    disabled={isUpgrading}
+                    onClick={() => handleUpgrade(plan.id)}
+                  >
+                    {isUpgrading ? "Redirecting to Stripe…" : `Upgrade to ${plan.name}`}
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
+
+        {/* Invoice history section */}
+        {invoices.length > 0 && (
+          <div style={s.invoiceSection}>
+            <button
+              style={s.invoiceToggle}
+              onClick={() => setShowInvoices(v => !v)}
+            >
+              🧾 Invoice History {showInvoices ? "▲" : "▼"}
+            </button>
+
+            {showInvoices && (
+              <div style={s.invoiceList}>
+                <p style={s.invoiceNote}>
+                  📧 Invoice &amp; receipt PDFs are also emailed to <strong>{user?.email}</strong> after each payment.
+                </p>
+                {invoices.map(inv => (
+                  <div key={inv.id} style={s.invoiceRow}>
+                    <div style={s.invoiceInfo}>
+                      <span style={s.invoiceNum}>{inv.number}</span>
+                      <span style={s.invoiceMeta}>{inv.date} · {inv.plan.charAt(0).toUpperCase() + inv.plan.slice(1)} · ${inv.amount_paid.toFixed(2)}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <span style={s.paidBadge}>Paid</span>
+                      <button
+                        style={s.downloadBtn}
+                        onClick={() => handleDownloadInvoice(inv.id, inv.number)}
+                        disabled={actionLoading === `inv-${inv.id}`}
+                      >
+                        {actionLoading === `inv-${inv.id}` ? "⏳" : "⬇ Invoice"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <p style={s.footer}>
           Payments processed securely by Stripe · Cancel anytime · No hidden fees
@@ -297,13 +407,15 @@ const s = {
     overflowY:      "auto",
   },
   container: {
-    background:   "#111827",
-    borderRadius: "24px",
-    padding:      "40px 36px",
-    maxWidth:     "860px",
-    width:        "100%",
-    position:     "relative",
-    fontFamily:   "'DM Sans','Segoe UI',sans-serif",
+    background:    "#111827",
+    borderRadius:  "24px",
+    padding:       "40px 36px",
+    maxWidth:      "860px",
+    width:         "100%",
+    position:      "relative",
+    fontFamily:    "'DM Sans','Segoe UI',sans-serif",
+    maxHeight:     "90vh",
+    overflowY:     "auto",
   },
   closeBtn: {
     position:   "absolute",
@@ -350,6 +462,16 @@ const s = {
     marginBottom: "20px",
     fontSize:     "0.875rem",
   },
+  cancellingBadge: {
+    background:   "rgba(234,179,8,0.1)",
+    border:       "1px solid rgba(234,179,8,0.3)",
+    borderRadius: "12px",
+    padding:      "12px 20px",
+    color:        "#fde68a",
+    textAlign:    "center",
+    marginBottom: "20px",
+    fontSize:     "0.875rem",
+  },
   manageLink: {
     background:     "transparent",
     border:         "none",
@@ -376,13 +498,13 @@ const s = {
     marginBottom:        "28px",
   },
   card: {
-    background:   "#1f2937",
-    borderRadius: "20px",
-    padding:      "26px 22px",
-    position:     "relative",
-    display:      "flex",
-    flexDirection:"column",
-    gap:          "10px",
+    background:    "#1f2937",
+    borderRadius:  "20px",
+    padding:       "26px 22px",
+    position:      "relative",
+    display:       "flex",
+    flexDirection: "column",
+    gap:           "10px",
   },
   popularBadge: {
     position:     "absolute",
@@ -416,13 +538,13 @@ const s = {
     color:    "#9ca3af",
   },
   featureList: {
-    listStyle: "none",
-    margin:    "4px 0 0",
-    padding:   0,
-    flexGrow:  1,
-    display:   "flex",
+    listStyle:     "none",
+    margin:        "4px 0 0",
+    padding:       0,
+    flexGrow:      1,
+    display:       "flex",
     flexDirection: "column",
-    gap:       "7px",
+    gap:           "7px",
   },
   featureItem: {
     fontSize: "0.84rem",
@@ -431,7 +553,6 @@ const s = {
     gap:      "8px",
   },
   ctaBtn: {
-    marginTop:    "14px",
     padding:      "13px",
     borderRadius: "12px",
     fontSize:     "0.9rem",
@@ -439,10 +560,92 @@ const s = {
     transition:   "opacity 0.2s",
     width:        "100%",
   },
+  // Invoice section
+  invoiceSection: {
+    borderTop:   "1px solid rgba(255,255,255,0.07)",
+    paddingTop:  "20px",
+    marginBottom: "20px",
+  },
+  invoiceToggle: {
+    background:  "transparent",
+    border:      "1px solid rgba(255,255,255,0.1)",
+    borderRadius: "10px",
+    color:       "#9ca3af",
+    padding:     "10px 18px",
+    cursor:      "pointer",
+    fontSize:    "0.875rem",
+    width:       "100%",
+    textAlign:   "left",
+    marginBottom: "12px",
+  },
+  invoiceNote: {
+    fontSize:     "0.8rem",
+    color:        "#6b7280",
+    margin:       "0 0 12px",
+    padding:      "10px 14px",
+    background:   "rgba(124,92,231,0.07)",
+    borderRadius: "8px",
+    border:       "1px solid rgba(124,92,231,0.15)",
+  },
+  invoiceList: {
+    display:       "flex",
+    flexDirection: "column",
+    gap:           "8px",
+  },
+  invoiceRow: {
+    display:        "flex",
+    justifyContent: "space-between",
+    alignItems:     "center",
+    background:     "#1f2937",
+    borderRadius:   "10px",
+    padding:        "12px 16px",
+    gap:            "12px",
+  },
+  invoiceInfo: {
+    display:       "flex",
+    flexDirection: "column",
+    gap:           "3px",
+    flex:          1,
+    minWidth:      0,
+  },
+  invoiceNum: {
+    fontSize:     "0.85rem",
+    fontWeight:   600,
+    color:        "#f9fafb",
+    whiteSpace:   "nowrap",
+    overflow:     "hidden",
+    textOverflow: "ellipsis",
+  },
+  invoiceMeta: {
+    fontSize: "0.75rem",
+    color:    "#6b7280",
+  },
+  paidBadge: {
+    background:   "rgba(52,211,153,0.15)",
+    border:       "1px solid rgba(52,211,153,0.3)",
+    color:        "#6ee7b7",
+    borderRadius: "6px",
+    padding:      "3px 10px",
+    fontSize:     "0.75rem",
+    fontWeight:   600,
+    whiteSpace:   "nowrap",
+  },
+  downloadBtn: {
+    background:   "rgba(124,92,231,0.15)",
+    border:       "1px solid rgba(124,92,231,0.3)",
+    color:        "#a78bfa",
+    borderRadius: "6px",
+    padding:      "4px 12px",
+    fontSize:     "0.75rem",
+    fontWeight:   600,
+    cursor:       "pointer",
+    whiteSpace:   "nowrap",
+  },
   footer: {
     textAlign: "center",
     color:     "#4b5563",
     fontSize:  "0.78rem",
+    marginTop: "8px",
   },
   spinnerLg: {
     width:        "44px",

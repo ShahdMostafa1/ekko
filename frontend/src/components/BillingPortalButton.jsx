@@ -7,7 +7,7 @@ export default function BillingPortalButton({ userId, children }) {
     if (!userId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/create-portal`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId }),
@@ -24,7 +24,7 @@ export default function BillingPortalButton({ userId, children }) {
 
   return (
     <button onClick={openPortal} disabled={loading} className="billing-portal-btn">
-      {loading ? "Opening…" : children || "Manage billing"}
+      {loading ? "Opening..." : children || "Manage billing"}
     </button>
   );
 }
