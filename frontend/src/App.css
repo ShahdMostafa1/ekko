@@ -393,6 +393,7 @@ body {
 .auth-card {
   width: 100%;
   background: rgba(255,255,255,.04);
+  max-width: 420px;
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   padding: 2rem;
