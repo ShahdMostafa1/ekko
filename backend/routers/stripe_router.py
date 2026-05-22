@@ -151,12 +151,8 @@ def _build_pdf(doc_type: str, invoice_number: str, receipt_number: str,
 
     story = []
 
-    try:
-        logo_bytes = base64.b64decode(EKKO_LOGO_B64)
-        logo_img   = Image(io.BytesIO(logo_bytes), width=14*mm, height=14*mm)
-    except Exception:
-        logo_img   = Paragraph("", normal)
-
+    logo_img = Paragraph("<b>Ekko</b>", h1)
+    
     title_text  = "Invoice" if doc_type == "invoice" else "Receipt"
     header_data = [[Paragraph(title_text, h1), logo_img]]
     header_tbl  = Table(header_data, colWidths=["85%", "15%"])
