@@ -26,9 +26,6 @@ export default function MusicPlayer({ params, onSaved }) {
   const regionLabel = params?.region_label || (region ? `🌍 ${region}` : "");
   const language    = params?.language     || "";
 
-  // Generated title — falls back to mood_label then generic string
-  const title = params?.title || params?.mood_label || "Your Mood Song";
-
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
     if (audioUrl || !taskId || taskId === "mock") return;
@@ -79,13 +76,18 @@ export default function MusicPlayer({ params, onSaved }) {
   }, [taskId, audioUrl]);
 
   // ── Save song once audio URL is ready ─────────────────────
+  // Uses params.task_id as the stable dedup key — safe across remounts.
+  // savedOk state persists within the mount, and the backend /music/save
+  // is idempotent if you add a unique constraint on (user_id, audio_url).
+  // XP is awarded via onSaved(taskId) → App.jsx uses task_id as session_key
+  // so even if this effect runs again, the backend xp_events table blocks it.
   useEffect(() => {
     if (!audioUrl)        return;
-    if (savedOk)          return;
+    if (savedOk)          return; // already saved in this mount — don't repeat
     if (!params?.user_id) return;
     if (params?.mock)     return;
 
-    const stableKey = params?.task_id || params?.audio_url;
+    const stableKey = params?.task_id || params?.audio_url; // used to pass back to onSaved
 
     const body = {
       user_id:         params.user_id,
@@ -95,7 +97,6 @@ export default function MusicPlayer({ params, onSaved }) {
       emotion:         params.emotion         || "neutral",
       valence:         params.valence         ?? 0.5,
       energy:          params.energy          ?? 0.5,
-      title:           params.title           || "",   // ← new
       lyrics:          params.lyrics          || "",
       audio_url:       audioUrl,
       prompt_used:     params.prompt_used     || "",
@@ -117,6 +118,9 @@ export default function MusicPlayer({ params, onSaved }) {
         if (d.saved) {
           console.log("[save] ✅ saved");
           setSavedOk(true);
+          // Pass the stable task_id back so App.jsx can use it as the
+          // XP session_key → "music_cocreated:{task_id}" never changes
+          // for this song, so the backend blocks double XP permanently.
           onSaved?.(stableKey);
         } else {
           console.error("[save] ❌ failed:", d.reason);
@@ -236,7 +240,7 @@ export default function MusicPlayer({ params, onSaved }) {
       <div style={s.header}>
         <span style={{ fontSize: 36 }}>🎵</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={s.title}>{title}</p>
+          <p style={s.title}>Your Mood Song</p>
           <p style={s.subtitle} title={promptUsed}>
             {regionLabel} · AI-generated{language ? ` · ${language} lyrics` : ""}
           </p>
@@ -299,7 +303,7 @@ export default function MusicPlayer({ params, onSaved }) {
         </button>
       )}
 
-      {/* Download — now properly styled and visible */}
+      {/* Download */}
       {!audioLoading && !audioError && (
         <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.downloadBtn}>
           ⬇ Download track
@@ -363,7 +367,7 @@ const s = {
     lineHeight: 1.7, whiteSpace: "pre-line", fontStyle: "italic",
   },
   header:   { display: "flex", alignItems: "center", gap: 14, width: "100%" },
-  title:    { margin: 0, fontSize: 17, fontWeight: 700, lineHeight: 1.3 },
+  title:    { margin: 0, fontSize: 17, fontWeight: 700 },
   subtitle: { margin: "4px 0 0", fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
   savedBadge: {
     fontSize: 11, color: "#34d399", fontWeight: 700,
@@ -402,19 +406,7 @@ const s = {
   },
   errorText: { fontSize: 13, color: "#f87171", margin: 0, textAlign: "center" },
   openLink:  { fontSize: 12, color: "#a855f7", textDecoration: "underline" },
-  // ↓ Fixed: now clearly visible with purple pill styling
-  downloadBtn: {
-    fontSize: 13,
-    color: "rgba(255,255,255,.85)",
-    textDecoration: "none",
-    marginTop: -8,
-    background: "rgba(168,85,247,.18)",
-    border: "1px solid rgba(168,85,247,.4)",
-    borderRadius: 20,
-    padding: "7px 20px",
-    cursor: "pointer",
-    transition: "background .15s",
-  },
+  downloadBtn: { fontSize: 12, color: "rgba(255,255,255,.4)", textDecoration: "none", marginTop: -8 },
   lyricsSection: { width: "100%", display: "flex", flexDirection: "column", gap: 8 },
   lyricsToggle: {
     background: "rgba(168,85,247,.15)", border: "1px solid rgba(168,85,247,.3)",
