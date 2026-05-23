@@ -334,29 +334,37 @@ export default function App() {
       setXp(profile.xp || 0)
       regionXpAwardedRef.current = !!profile.region_xp_awarded
       setUserPlan(profile.plan || 'free')
-    }
+    }s
     setScreen('onboarding')
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) loadProfile(session.user)
-      else setScreen('auth')
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
-        setUser(null); userRef.current = null
-        regionXpAwardedRef.current = false
-        setXp(0); setRegion(null); setLanguage(null)
-        setMoodData(null); setMusicParams(null)
-        pendingGenRef.current = null
-        moodSessionIdRef.current = null; songSessionIdRef.current = null
-        setScreen('auth'); return
-      }
-      if (session?.user) loadProfile(session.user)
-    })
-    return () => subscription.unsubscribe()
-  }, [])
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session?.user) loadProfile(session.user)
+    else setScreen('auth')
+  })
+
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') {
+      setUser(null); userRef.current = null
+      regionXpAwardedRef.current = false
+      setXp(0); setRegion(null); setLanguage(null)
+      setMoodData(null); setMusicParams(null)
+      pendingGenRef.current = null
+      moodSessionIdRef.current = null; songSessionIdRef.current = null
+      setScreen('auth'); return
+    }
+
+    // Safari tab-switch guard: Supabase re-fires SIGNED_IN on visibility restore.
+    // If we already have this user loaded, ignore the event entirely.
+    if (session?.user) {
+      if (userRef.current?.id === session.user.id) return
+      loadProfile(session.user)
+    }
+  })
+
+  return () => subscription.unsubscribe()
+}, [])
 
   const handleAuth = ({ user: authUser, profile }) => {
     setUser(authUser); userRef.current = authUser

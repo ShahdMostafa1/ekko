@@ -60,6 +60,13 @@ export default function SongHistory({ userId = '' }) {
     const meta    = REGION_META[song.region] || REGION_META.global
     const isOpen  = expanded === song.id
     const isPlay  = playing  === song.id
+
+    // Title: prefer generated title, fall back to mood_label, then emotion
+    const displayTitle = song.title || song.mood_label || song.emotion
+
+    // Subtitle shows mood_label if title is different from it
+    const showMoodSub = song.title && song.mood_label && song.title !== song.mood_label
+
     const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric',
     })
@@ -70,7 +77,10 @@ export default function SongHistory({ userId = '' }) {
           <div className="sh-left">
             <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
             <div className="sh-info">
-              <p className="sh-mood">{song.mood_label || song.emotion}</p>
+              <p className="sh-mood">{displayTitle}</p>
+              {showMoodSub && (
+                <p className="sh-mood-sub">{song.mood_label}</p>
+              )}
               <p className="sh-meta">
                 <span className="sh-region">{meta.emoji} {meta.label}</span>
                 <span className="sh-dot">·</span>
@@ -223,7 +233,17 @@ export default function SongHistory({ userId = '' }) {
         }
         .sh-left { display: flex; align-items: center; gap: 12px; }
         .sh-emotion { font-size: 26px; line-height: 1; }
-        .sh-mood { font-size: 14px; font-weight: 600; color: #e0d8ff; margin: 0 0 3px; }
+        .sh-info { display: flex; flex-direction: column; gap: 1px; }
+
+        /* Primary title — generated song title */
+        .sh-mood { font-size: 14px; font-weight: 600; color: #e0d8ff; margin: 0 0 1px; }
+
+        /* Secondary — mood label shown only when title differs */
+        .sh-mood-sub {
+          font-size: 11px; color: #9d8ec7; margin: 0 0 3px;
+          font-style: italic;
+        }
+
         .sh-meta {
           font-size: 11px; color: #8b7eb8; margin: 0;
           display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
