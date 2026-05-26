@@ -26,8 +26,8 @@ OPENROUTER_MODELS = [
 
 MOCK_MODE      = False
 MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0d42b.mp3"
+
 # ── Artist styles per region ──────────────────────────────────────────────────
-# artist_name → passed directly to Sonauto as the artist reference
 ARTIST_STYLES = {
     "arabic": [
         { "id": "amr_style",      "label": "Amr Diab",         "description": "Egyptian romantic pop, warm & soulful",       "artist_name": "Amr Diab"         },
@@ -250,6 +250,47 @@ def _get_artist_style(region: str, artist_style_id: str) -> dict | None:
     return None
 
 
+# ── NEW: Title generator ──────────────────────────────────────────────────────
+def _generate_title(mood_label: str, emotion: str, lyrics: str) -> str:
+    system_msg = (
+        "You are a professional music artist naming your new song. "
+        "Create a real, evocative song title — the kind you'd see on Spotify or Apple Music. "
+        "It should feel poetic, emotional, and memorable. "
+        "Output ONLY the title. No quotes, no explanation, no punctuation at the end. "
+        "Max 5 words. Never use the emotion word directly (e.g. never write 'Joyful' or 'Sadness')."
+    )
+    user_msg = (
+        f"The song expresses: {mood_label or emotion}\n"
+        f"Opening lyrics: {lyrics[:150]}\n\n"
+        f"Write a real song title for this. "
+        f"Think like: 'Blinding Lights', 'Someone Like You', 'Shape of You', 'Let Her Go'. "
+        f"Output ONLY the title."
+    )
+    for model in OPENROUTER_MODELS:
+        try:
+            res = httpx.post(
+                OPENROUTER_URL,
+                headers=_openrouter_headers(),
+                json={
+                    "model": model, "max_tokens": 20,
+                    "messages": [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user",   "content": user_msg},
+                    ],
+                },
+                timeout=15,
+            )
+            res.raise_for_status()
+            title = res.json()["choices"][0]["message"]["content"].strip()
+            title = title.strip('"\'').strip()
+            if title:
+                print(f"[music] Title: {title}")
+                return title
+        except Exception as e:
+            print(f"[music] {model} title failed: {e}")
+    return mood_label or emotion
+
+
 def _generate_lyrics(
     mood_text: str, mood_label: str, emotion: str,
     valence: float, energy: float, region: str, language_code: str = "",
@@ -324,7 +365,6 @@ def _build_style_prompt(
         f"Feeling: {mood_label}. "
         f"Professional production, emotionally resonant."
     )
-    # Sonauto accepts artist name to guide vocal/production style
     if artist_name:
         prompt += f" Artist style inspired by {artist_name}."
 
@@ -361,6 +401,7 @@ class SaveSongRequest(BaseModel):
     language_code:   str   = ""
     artist_style_id: str   = ""
     artist_label:    str   = ""
+    title:           str   = ""   # ← NEW
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -384,12 +425,19 @@ async def generate_music(req: GenerateRequest):
 
     if MOCK_MODE:
         return {
-            "task_id": "mock", "audio_url": MOCK_AUDIO_URL,
-            "prompt_used": "Mock", "lyrics": "Mock lyrics",
-            "region": req.region, "region_label": region_label,
-            "language": lang_display, "language_code": lang_code,
-            "artist_style_id": req.artist_style_id, "artist_label": artist_label,
-            "mock": True, "status": "SUCCESS",
+            "task_id":         "mock",
+            "audio_url":       MOCK_AUDIO_URL,
+            "prompt_used":     "Mock",
+            "lyrics":          "Mock lyrics",
+            "title":           "Echoes of Tomorrow",
+            "region":          req.region,
+            "region_label":    region_label,
+            "language":        lang_display,
+            "language_code":   lang_code,
+            "artist_style_id": req.artist_style_id,
+            "artist_label":    artist_label,
+            "mock":            True,
+            "status":          "SUCCESS",
         }
 
     print(f"[music] Generating | emotion={req.emotion} region={req.region} "
@@ -402,12 +450,14 @@ async def generate_music(req: GenerateRequest):
     )
     print(f"[music] Lyrics:\n{lyrics}\n")
 
+    # ── Generate song title ───────────────────────────────────────────────
+    title = _generate_title(mood_label, req.emotion, lyrics)
+
     style_prompt = _build_style_prompt(
         req.valence, req.energy, req.region, mood_label, artist_name
     )
     print(f"[music] Style prompt: {style_prompt}")
 
-    # Build Sonauto payload — include artist if specified
     sonauto_payload = {
         "prompt":       style_prompt,
         "lyrics":       lyrics,
@@ -439,6 +489,7 @@ async def generate_music(req: GenerateRequest):
 
     return {
         "task_id":          task_id,
+        "title":            title,        # ← NEW
         "prompt_used":      style_prompt,
         "lyrics":           lyrics,
         "region":           req.region,
@@ -500,8 +551,9 @@ async def save_song(req: SaveSongRequest):
             "language":         req.language,
             "artist_style_id":  req.artist_style_id,
             "artist_label":     req.artist_label,
+            "title":            req.title,    # ← NEW
         }).execute()
-        print(f"[music] ✅ Song saved user={req.user_id} artist={req.artist_label}")
+        print(f"[music] ✅ Song saved user={req.user_id} title={req.title} artist={req.artist_label}")
         return {"saved": True}
     except Exception as e:
         print(f"[music] ❌ Save failed: {e}")
