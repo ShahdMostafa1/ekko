@@ -113,7 +113,7 @@ body {
   z-index: 100;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;  
   padding: 14px 24px;
   background: rgba(7,5,15,.75);
   backdrop-filter: blur(24px) saturate(1.4);

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
 const POLL_INTERVAL = 4000;
-const POLL_TIMEOUT  = 360000; // 6 min
+const POLL_TIMEOUT  = 360000;
 
 export default function MusicPlayer({ params, onSaved }) {
   const audioRef     = useRef(null);
@@ -19,29 +19,28 @@ export default function MusicPlayer({ params, onSaved }) {
   const [audioError, setAudioError]     = useState(null);
   const [showLyrics, setShowLyrics]     = useState(false);
   const [savedOk, setSavedOk]           = useState(false);
+  const [copied, setCopied]             = useState(false);
 
   const lyrics      = params?.lyrics       || null;
   const promptUsed  = params?.prompt_used  || "";
   const region      = params?.region       || "";
   const regionLabel = params?.region_label || (region ? `🌍 ${region}` : "");
   const language    = params?.language     || "";
+  const songTitle   = params?.title        || "Your Mood Song";
 
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
     if (audioUrl || !taskId || taskId === "mock") return;
-
     setPolling(true);
     pollStartRef.current = Date.now();
 
     const poll = async () => {
       const elapsed = Math.round((Date.now() - pollStartRef.current) / 1000);
-
       if (elapsed * 1000 > POLL_TIMEOUT) {
         setPolling(false);
         setPollStatus("Took too long. Please try again.");
         return;
       }
-
       if (elapsed < 15)       setPollStatus("Writing your song lyrics…");
       else if (elapsed < 30)  setPollStatus("Composing the melody…");
       else if (elapsed < 60)  setPollStatus("Recording vocals…");
@@ -51,9 +50,6 @@ export default function MusicPlayer({ params, onSaved }) {
       try {
         const res  = await fetch(`${import.meta.env.VITE_API_URL}/music/status/${taskId}`);
         const data = await res.json();
-
-        console.log("[poll] status response:", data);
-
         if (data.status === "SUCCESS" && data.audio_url) {
           setAudioUrl(data.audio_url);
           setPolling(false);
@@ -67,7 +63,6 @@ export default function MusicPlayer({ params, onSaved }) {
       } catch (err) {
         console.error("[poll] error:", err);
       }
-
       pollRef.current = setTimeout(poll, POLL_INTERVAL);
     };
 
@@ -76,73 +71,39 @@ export default function MusicPlayer({ params, onSaved }) {
   }, [taskId, audioUrl]);
 
   // ── Save song once audio URL is ready ─────────────────────
-  // Uses params.task_id as the stable dedup key — safe across remounts.
-  // savedOk state persists within the mount, and the backend /music/save
-  // is idempotent if you add a unique constraint on (user_id, audio_url).
-  // XP is awarded via onSaved(taskId) → App.jsx uses task_id as session_key
-  // so even if this effect runs again, the backend xp_events table blocks it.
   useEffect(() => {
-    if (!audioUrl)        return;
-    if (savedOk)          return; // already saved in this mount — don't repeat
-    if (!params?.user_id) return;
-    if (params?.mock)     return;
-
-    const stableKey = params?.task_id || params?.audio_url; // used to pass back to onSaved
-
+    if (!audioUrl || savedOk || !params?.user_id || params?.mock) return;
+    const stableKey = params?.task_id || params?.audio_url;
     const body = {
-      user_id:         params.user_id,
-      region:          params.region          || "",
-      region_label:    params.region_label    || "",
-      mood_label:      params.mood_label      || "",
-      emotion:         params.emotion         || "neutral",
-      valence:         params.valence         ?? 0.5,
-      energy:          params.energy          ?? 0.5,
-      lyrics:          params.lyrics          || "",
-      audio_url:       audioUrl,
-      prompt_used:     params.prompt_used     || "",
-      language:        params.language        || "English",
-      language_code:   params.language_code   || "",
-      artist_style_id: params.artist_style_id || "",
-      artist_label:    params.artist_label    || "",
+      user_id: params.user_id, region: params.region || "",
+      region_label: params.region_label || "", mood_label: params.mood_label || "",
+      emotion: params.emotion || "neutral", valence: params.valence ?? 0.5,
+      energy: params.energy ?? 0.5, lyrics: params.lyrics || "",
+      audio_url: audioUrl, prompt_used: params.prompt_used || "",
+      language: params.language || "English", language_code: params.language_code || "",
+      artist_style_id: params.artist_style_id || "", artist_label: params.artist_label || "",
+      title: params.title || "",
     };
-
-    console.log("[save] saving song for user:", params.user_id);
-
     fetch(`${import.meta.env.VITE_API_URL}/music/save`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     })
       .then(r => r.json())
-      .then(d => {
-        if (d.saved) {
-          console.log("[save] ✅ saved");
-          setSavedOk(true);
-          // Pass the stable task_id back so App.jsx can use it as the
-          // XP session_key → "music_cocreated:{task_id}" never changes
-          // for this song, so the backend blocks double XP permanently.
-          onSaved?.(stableKey);
-        } else {
-          console.error("[save] ❌ failed:", d.reason);
-        }
-      })
-      .catch(e => console.error("[save] ❌ network error:", e));
+      .then(d => { if (d.saved) { setSavedOk(true); onSaved?.(stableKey); } })
+      .catch(e => console.error("[save] error:", e));
   }, [audioUrl, savedOk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Audio event handlers ───────────────────────────────────
-  const onCanPlay        = () => { console.log("[audio] canplay"); setAudioLoading(false); };
+  const onCanPlay        = () => setAudioLoading(false);
   const onLoadedMetadata = () => setDuration(audioRef.current?.duration || 0);
   const onTimeUpdate     = () => {
     const el = audioRef.current;
     if (el?.duration) setProgress(el.currentTime / el.duration);
   };
   const onEnded = () => {
-    setPlaying(false);
-    setProgress(0);
+    setPlaying(false); setProgress(0);
     if (audioRef.current) audioRef.current.currentTime = 0;
   };
   const onError = (e) => {
-    console.error("[audio] error event:", e?.nativeEvent?.message, audioRef.current?.error);
     setAudioLoading(false);
     const el = audioRef.current;
     if (el && audioUrl) {
@@ -160,16 +121,11 @@ export default function MusicPlayer({ params, onSaved }) {
   const togglePlay = () => {
     const el = audioRef.current;
     if (!el) return;
-    if (playing) {
-      el.pause();
-      setPlaying(false);
-    } else {
+    if (playing) { el.pause(); setPlaying(false); }
+    else {
       el.play()
         .then(() => setPlaying(true))
-        .catch(err => {
-          console.error("[audio] play() failed:", err);
-          setAudioError("Tap play to start.");
-        });
+        .catch(() => setAudioError("Tap play to start."));
     }
   };
 
@@ -187,6 +143,16 @@ export default function MusicPlayer({ params, onSaved }) {
     return `${Math.floor(sec / 60)}:${Math.floor(sec % 60).toString().padStart(2, "0")}`;
   };
 
+  const handleShare = async () => {
+    const text = `🎵 Just created "${songTitle}" on Ekko — an AI song made from my mood!\n${window.location.href}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: songTitle, text }); return; } catch {}
+    }
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   // ── Generating screen ──────────────────────────────────────
   if (polling || (!audioUrl && taskId)) {
     return (
@@ -196,23 +162,18 @@ export default function MusicPlayer({ params, onSaved }) {
         {lyrics && (
           <div style={s.lyricsPreview}>
             <p style={s.lyricsPreviewLabel}>✍️ Lyrics written</p>
-            <p style={s.lyricsPreviewText}>
-              {lyrics.split("\n").slice(0, 3).join("\n")}…
-            </p>
+            <p style={s.lyricsPreviewText}>{lyrics.split("\n").slice(0, 3).join("\n")}…</p>
           </div>
         )}
         <p style={s.pollSub}>AI is creating a full song just for your mood</p>
         <div style={s.dots}>
-          {[0,1,2].map(i => (
-            <span key={i} style={{ ...s.dot, animationDelay: `${i * 0.2}s` }} />
-          ))}
+          {[0,1,2].map(i => <span key={i} style={{ ...s.dot, animationDelay: `${i * 0.2}s` }} />)}
         </div>
         <style>{keyframes}</style>
       </div>
     );
   }
 
-  // ── No audio ───────────────────────────────────────────────
   if (!audioUrl) {
     return (
       <div style={s.card}>
@@ -226,56 +187,62 @@ export default function MusicPlayer({ params, onSaved }) {
   return (
     <div style={s.card}>
       <audio
-        ref={audioRef}
-        src={audioUrl}
-        onCanPlay={onCanPlay}
-        onError={onError}
+        ref={audioRef} src={audioUrl}
+        onCanPlay={onCanPlay} onError={onError}
         onLoadedMetadata={onLoadedMetadata}
-        onTimeUpdate={onTimeUpdate}
-        onEnded={onEnded}
+        onTimeUpdate={onTimeUpdate} onEnded={onEnded}
         preload="auto"
       />
 
       {/* Header */}
       <div style={s.header}>
-        <span style={{ fontSize: 36 }}>🎵</span>
+        <div style={s.albumArt}>
+          <span style={{ fontSize: 28 }}>🎵</span>
+          {playing && <div style={s.albumPulse} />}
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={s.title}>Your Mood Song</p>
+          <p style={s.title}>{songTitle}</p>
           <p style={s.subtitle} title={promptUsed}>
-            {regionLabel} · AI-generated{language ? ` · ${language} lyrics` : ""}
+            {regionLabel}{language ? ` · ${language} lyrics` : ""}
           </p>
         </div>
-        {savedOk && (
-          <div style={s.savedBadge}>✓ Saved</div>
-        )}
+        {savedOk && <div style={s.savedBadge}>✓ Saved</div>}
       </div>
 
-      {/* Waveform + seek */}
-      <div style={s.progressWrap} onClick={seek}>
+      {/* Waveform bars — animated while playing */}
+      <div style={s.waveformWrap} onClick={seek} role="slider" aria-label="Seek">
         <div style={s.barsWrap} aria-hidden="true">
-          {Array.from({ length: 32 }).map((_, i) => (
-            <div key={i} style={{
-              ...s.bar,
-              height: `${16 + Math.sin(i * 0.7) * 12 + Math.cos(i * 0.3) * 8}px`,
-              opacity: progress * 32 > i ? 1 : 0.25,
-              animation: playing
-                ? `barPulse ${0.6 + (i % 3) * 0.15}s ease-in-out ${i * 0.04}s infinite alternate`
-                : "none",
-            }} />
-          ))}
+          {Array.from({ length: 40 }).map((_, i) => {
+            const h = 10 + Math.sin(i * 0.55) * 14 + Math.cos(i * 0.28) * 9;
+            const isPast = progress * 40 > i;
+            return (
+              <div key={i} style={{
+                ...s.bar,
+                height: `${h}px`,
+                background: isPast
+                  ? `linear-gradient(180deg,#c084fc,#7c5ce7)`
+                  : "rgba(255,255,255,0.13)",
+                animation: playing
+                  ? `barPulse ${0.5 + (i % 5) * 0.12}s ease-in-out ${i * 0.03}s infinite alternate`
+                  : "none",
+                transform: playing && isPast ? undefined : "scaleY(1)",
+              }} />
+            );
+          })}
         </div>
+        {/* Thin progress line underneath bars */}
         <div style={s.progressBg}>
           <div style={{ ...s.progressFill, width: `${progress * 100}%` }} />
         </div>
       </div>
 
-      {/* Time */}
+      {/* Time row */}
       <div style={s.timeRow}>
         <span style={s.timeText}>{fmt(duration * progress)}</span>
         <span style={s.timeText}>{fmt(duration)}</span>
       </div>
 
-      {/* Play / loading / error */}
+      {/* Play button */}
       {audioLoading ? (
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={s.spinner} />
@@ -284,30 +251,51 @@ export default function MusicPlayer({ params, onSaved }) {
       ) : audioError ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <p style={s.errorText}>{audioError}</p>
-          <a href={audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>
-            Open audio in new tab ↗
-          </a>
+          <a href={audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
         </div>
       ) : (
         <button style={s.playBtn} onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
           {playing ? (
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
-              <rect x="5" y="4" width="4" height="16" rx="1"/>
-              <rect x="15" y="4" width="4" height="16" rx="1"/>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+              <rect x="5" y="4" width="4" height="16" rx="1.5"/>
+              <rect x="15" y="4" width="4" height="16" rx="1.5"/>
             </svg>
           ) : (
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
-              <polygon points="5,3 19,12 5,21"/>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+              <polygon points="6,3 20,12 6,21"/>
             </svg>
           )}
         </button>
       )}
 
-      {/* Download */}
+      {/* Action row — Download + Share */}
       {!audioLoading && !audioError && (
-        <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.downloadBtn}>
-          ⬇ Download track
-        </a>
+        <div style={s.actionRow}>
+          <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 20h18"/>
+            </svg>
+            Download
+          </a>
+          <button style={{ ...s.actionBtn, cursor: "pointer", border: "none" }} onClick={handleShare}>
+            {copied ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span style={{ color: "#34d399" }}>Copied!</span>
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Share
+              </>
+            )}
+          </button>
+        </div>
       )}
 
       {/* Lyrics */}
@@ -322,7 +310,7 @@ export default function MusicPlayer({ params, onSaved }) {
                 <p key={i} style={{
                   ...s.lyricLine,
                   opacity: line.trim() === "" ? 0 : 1,
-                  marginBottom: line.trim() === "" ? "12px" : "2px",
+                  marginBottom: line.trim() === "" ? "14px" : "2px",
                 }}>
                   {line || "\u00A0"}
                 </p>
@@ -339,11 +327,13 @@ export default function MusicPlayer({ params, onSaved }) {
 
 const s = {
   card: {
-    background: "linear-gradient(135deg,#1a1040,#2d1b69 50%,#1a1040)",
-    borderRadius: 24, padding: "28px 24px", maxWidth: 380,
-    margin: "0 auto", boxShadow: "0 16px 48px rgba(92,63,199,.4)",
+    background: "linear-gradient(145deg,#140d38,#2a1860 45%,#1a1040)",
+    borderRadius: 28, padding: "32px 28px",
+    // ── WIDER: was 420, now 480 ──
+    maxWidth: 480,
+    margin: "0 auto", boxShadow: "0 20px 60px rgba(92,63,199,.45)",
     display: "flex", flexDirection: "column", alignItems: "center",
-    gap: 18, color: "#fff", fontFamily: "'DM Sans','Segoe UI',sans-serif",
+    gap: 20, color: "#fff", fontFamily: "'DM Sans','Segoe UI',sans-serif",
   },
   orb: {
     width: 80, height: 80, borderRadius: "50%",
@@ -366,38 +356,62 @@ const s = {
     margin: 0, fontSize: 13, color: "rgba(255,255,255,.7)",
     lineHeight: 1.7, whiteSpace: "pre-line", fontStyle: "italic",
   },
-  header:   { display: "flex", alignItems: "center", gap: 14, width: "100%" },
-  title:    { margin: 0, fontSize: 17, fontWeight: 700 },
-  subtitle: { margin: "4px 0 0", fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
+  // ── Header with album art circle ──
+  header: { display: "flex", alignItems: "center", gap: 14, width: "100%" },
+  albumArt: {
+    width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+    background: "linear-gradient(135deg,#3b1f80,#6d28d9)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    position: "relative", overflow: "hidden",
+    boxShadow: "0 4px 16px rgba(109,40,217,.4)",
+  },
+  albumPulse: {
+    position: "absolute", inset: 0, borderRadius: 14,
+    background: "rgba(168,85,247,.25)",
+    animation: "albumGlow 1.8s ease-in-out infinite",
+  },
+  title: {
+    margin: 0, fontSize: 19, fontWeight: 700, lineHeight: 1.25,
+    // Allow 2 lines instead of clipping with ellipsis on one
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  },
+  subtitle: { margin: "5px 0 0", fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
   savedBadge: {
     fontSize: 11, color: "#34d399", fontWeight: 700,
     background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)",
     borderRadius: 20, padding: "4px 10px", flexShrink: 0,
   },
-  progressWrap: {
+  // ── Waveform ──
+  waveformWrap: {
     width: "100%", cursor: "pointer", position: "relative",
-    height: 52, display: "flex", alignItems: "center",
+    height: 58, display: "flex", alignItems: "center",
+    userSelect: "none",
   },
-  barsWrap: { display: "flex", alignItems: "center", gap: 2, width: "100%", height: 48 },
+  barsWrap: {
+    display: "flex", alignItems: "center", gap: 2.5,
+    width: "100%", height: 54,
+  },
   bar: {
-    flex: 1, background: "linear-gradient(180deg,#a855f7,#7c5ce7)",
-    borderRadius: 2, transformOrigin: "bottom", transition: "opacity .2s",
+    flex: 1, borderRadius: 3, transformOrigin: "center",
+    transition: "background .15s, transform .15s",
+    minWidth: 2,
   },
   progressBg: {
     position: "absolute", bottom: 0, left: 0, right: 0,
-    height: 3, background: "rgba(255,255,255,.12)", borderRadius: 2, overflow: "hidden",
+    height: 2, background: "rgba(255,255,255,.1)", borderRadius: 1, overflow: "hidden",
   },
   progressFill: {
-    height: "100%", background: "linear-gradient(90deg,#7c5ce7,#a855f7)",
-    borderRadius: 2, transition: "width .1s linear",
+    height: "100%", background: "linear-gradient(90deg,#7c5ce7,#c084fc)",
+    borderRadius: 1, transition: "width .1s linear",
   },
   timeRow:  { display: "flex", justifyContent: "space-between", width: "100%", marginTop: -10 },
-  timeText: { fontSize: 11, color: "rgba(255,255,255,.4)", fontVariantNumeric: "tabular-nums" },
+  timeText: { fontSize: 11, color: "rgba(255,255,255,.38)", fontVariantNumeric: "tabular-nums" },
   playBtn: {
-    width: 68, height: 68, borderRadius: "50%", border: "none",
+    width: 72, height: 72, borderRadius: "50%", border: "none",
     background: "linear-gradient(135deg,#7c5ce7,#a855f7)",
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-    boxShadow: "0 8px 24px rgba(124,92,231,.5)", transition: "transform .15s",
+    boxShadow: "0 8px 28px rgba(124,92,231,.55)", transition: "transform .15s, box-shadow .15s",
   },
   spinner: {
     width: 24, height: 24, border: "3px solid rgba(255,255,255,.15)",
@@ -406,36 +420,55 @@ const s = {
   },
   errorText: { fontSize: 13, color: "#f87171", margin: 0, textAlign: "center" },
   openLink:  { fontSize: 12, color: "#a855f7", textDecoration: "underline" },
-  downloadBtn: { fontSize: 12, color: "rgba(255,255,255,.4)", textDecoration: "none", marginTop: -8 },
+  // ── NEW: action row for download + share ──
+  actionRow: {
+    display: "flex", gap: 10, width: "100%",
+  },
+  actionBtn: {
+    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+    gap: 7, padding: "10px 0",
+    fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.8)",
+    background: "rgba(255,255,255,.07)",
+    border: "1px solid rgba(255,255,255,.13)",
+    borderRadius: 14, textDecoration: "none",
+    transition: "background .2s, transform .12s",
+  },
   lyricsSection: { width: "100%", display: "flex", flexDirection: "column", gap: 8 },
   lyricsToggle: {
-    background: "rgba(168,85,247,.15)", border: "1px solid rgba(168,85,247,.3)",
-    borderRadius: 20, padding: "7px 16px", color: "#c084fc",
+    background: "rgba(168,85,247,.12)", border: "1px solid rgba(168,85,247,.28)",
+    borderRadius: 20, padding: "8px 18px", color: "#c084fc",
     fontSize: 13, fontWeight: 600, cursor: "pointer", alignSelf: "center",
+    transition: "background .2s",
   },
   lyricsBox: {
-    background: "rgba(255,255,255,.05)", borderRadius: 14,
-    padding: "16px 18px", width: "100%", boxSizing: "border-box",
-    maxHeight: 240, overflowY: "auto",
+    background: "rgba(255,255,255,.04)", borderRadius: 16,
+    padding: "18px 20px", width: "100%", boxSizing: "border-box",
+    // ── TALLER scroll area ──
+    maxHeight: 300, overflowY: "auto",
+    border: "1px solid rgba(255,255,255,.06)",
   },
   lyricLine: {
-    margin: 0, fontSize: 14, color: "rgba(255,255,255,.85)",
-    lineHeight: 1.8, whiteSpace: "pre-wrap",
+    margin: 0, fontSize: 14, color: "rgba(255,255,255,.82)",
+    lineHeight: 1.85, whiteSpace: "pre-wrap",
   },
 };
 
 const keyframes = `
   @keyframes barPulse {
-    from { transform: scaleY(0.5); }
-    to   { transform: scaleY(1.4); }
+    from { transform: scaleY(0.45); }
+    to   { transform: scaleY(1.55); }
   }
   @keyframes orbPulse {
     0%,100% { box-shadow: 0 0 40px rgba(168,85,247,.6); }
-    50%      { box-shadow: 0 0 80px rgba(168,85,247,.95); }
+    50%      { box-shadow: 0 0 90px rgba(168,85,247,1); }
   }
   @keyframes dotBounce {
-    from { transform: translateY(0); opacity: .5; }
+    from { transform: translateY(0); opacity: .4; }
     to   { transform: translateY(-8px); opacity: 1; }
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes albumGlow {
+    0%,100% { opacity: .3; }
+    50%      { opacity: .7; }
+  }
 `;

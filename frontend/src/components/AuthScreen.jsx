@@ -12,6 +12,7 @@ const PASSWORD_RULES = [
 export default function AuthScreen({ onAuth }) {
   const [mode, setMode]           = useState('login')
   const [email, setEmail]         = useState('')
+  const [fullName, setFullName]   = useState('')
   const [password, setPass]       = useState('')
   const [showPass, setShowPass]   = useState(false)
   const [loading, setLoading]     = useState(false)
@@ -54,9 +55,19 @@ export default function AuthScreen({ onAuth }) {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: {
+            emailRedirectTo: window.location.origin,
+            data: { full_name: fullName.trim() },
+          },
         })
         if (signUpError) throw signUpError
+
+        // Save full_name to profiles table if user created immediately
+        if (data.user && fullName.trim()) {
+          await supabase
+            .from('profiles')
+            .upsert({ id: data.user.id, full_name: fullName.trim() }, { onConflict: 'id' })
+        }
 
         if (data.user && !data.user.email_confirmed_at) {
           setAwaitingConfirm(true)
@@ -152,7 +163,8 @@ export default function AuthScreen({ onAuth }) {
         minHeight: '100vh', width: '100%',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',      }}>
+        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+      }}>
         <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
           <div style={{ fontSize: 52, lineHeight: 1 }}>✉️</div>
 
@@ -226,14 +238,14 @@ export default function AuthScreen({ onAuth }) {
         minHeight: '100vh', width: '100%',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',      }}>
+        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+      }}>
         <div style={{ width: '100%', maxWidth: 440 }}></div>
         <div className="auth-logo">EKKO</div>
 
         <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
 
           {resetSent ? (
-            // ── Success state ──
             <>
               <div style={{ fontSize: 52, lineHeight: 1 }}>📬</div>
               <div>
@@ -268,7 +280,6 @@ export default function AuthScreen({ onAuth }) {
               </button>
             </>
           ) : (
-            // ── Enter email state ──
             <>
               <div style={{ fontSize: 52, lineHeight: 1 }}>🔑</div>
               <div>
@@ -320,12 +331,15 @@ export default function AuthScreen({ onAuth }) {
   }
 
   // ── Normal login / register screen ────────────────────────────────────
+  const canSubmit = email && password && (mode === 'login' || (allPassed && fullName.trim().length > 0))
+
   return (
     <div style={{
       minHeight: '100vh', width: '100%',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',    }}>
+      padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+    }}>
       <div className="auth-logo">EKKO</div>
       <h1 className="auth-headline">
         <em>{mode === 'login' ? 'Welcome back' : 'Begin your journey'}</em>
@@ -345,6 +359,19 @@ export default function AuthScreen({ onAuth }) {
         </button>
 
         <div className="auth-divider"><span>or</span></div>
+
+        {/* Full name — register only */}
+        {mode === 'register' && (
+          <input
+            className="auth-input"
+            type="text"
+            placeholder="Full name"
+            value={fullName}
+            onChange={e => setFullName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+            style={{ width: '100%', boxSizing: 'border-box' }}
+          />
+        )}
 
         <input
           className="auth-input"
@@ -462,7 +489,8 @@ export default function AuthScreen({ onAuth }) {
         <button
           className="auth-cta"
           onClick={handleSubmit}
-          disabled={loading || !email || !password || (mode === 'register' && !allPassed)}
+          disabled={loading || !canSubmit}
+          style={{ opacity: loading || !canSubmit ? 0.6 : 1 }}
         >
           {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
         </button>
@@ -473,6 +501,7 @@ export default function AuthScreen({ onAuth }) {
             setMode(mode === 'login' ? 'register' : 'login')
             setError(null)
             setPass('')
+            setFullName('')
             setPwFocused(false)
           }}>
             {mode === 'login' ? 'Sign up' : 'Sign in'}
