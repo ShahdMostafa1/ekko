@@ -1,108 +1,121 @@
 import { useState, useRef, useEffect } from "react";
 
-// ── Expanded Emotion → mood card mapping (7 core + 13 nuanced = 20 total) ─────
+// ── Emotion → mood card mapping ───────────────────────────────────────────────
+// FREE tier: 7 core emotions
+// PAID tier (Groove/Studio): all 20
 const EMOTION_CARDS = {
+  // ── Core 7 (free) ───────────────────────────────────────────────────────────
   joy: {
     label: "Joyful & bright", labelAr: "مبسوط ومشرق",
     tags: ["Happy", "Light", "Free"], tagsAr: ["سعيد", "خفيف", "حر"],
-    color: "#f5c842", emoji: "☀️",
+    color: "#f5c842", emoji: "☀️", paid: false,
   },
   sadness: {
     label: "Melancholic & introspective", labelAr: "حزين ومتأمل",
     tags: ["Sad", "Reflective", "Tender"], tagsAr: ["حزين", "متأمل", "حساس"],
-    color: "#6e8efb", emoji: "🌧️",
+    color: "#6e8efb", emoji: "🌧️", paid: false,
   },
   anger: {
     label: "Intense & charged", labelAr: "غاضب ومشحون",
     tags: ["Fierce", "Driven", "Raw"], tagsAr: ["حاد", "مندفع", "خام"],
-    color: "#f56342", emoji: "🔥",
+    color: "#f56342", emoji: "🔥", paid: false,
   },
   fear: {
     label: "Anxious & unsettled", labelAr: "قلقان ومضطرب",
     tags: ["Restless", "Tense", "Searching"], tagsAr: ["مضطرب", "متوتر", "ضائع"],
-    color: "#9b59b6", emoji: "🌀",
+    color: "#9b59b6", emoji: "🌀", paid: false,
   },
   surprise: {
     label: "Surprised & alert", labelAr: "متفاجئ ومنتبه",
     tags: ["Alert", "Open", "Vivid"], tagsAr: ["منتبه", "منفتح", "حي"],
-    color: "#2ecc71", emoji: "⚡",
+    color: "#2ecc71", emoji: "⚡", paid: false,
   },
   neutral: {
     label: "Calm & centred", labelAr: "هادي ومتوازن",
     tags: ["Still", "Clear", "Balanced"], tagsAr: ["هادئ", "واضح", "متوازن"],
-    color: "#95a5a6", emoji: "🌿",
+    color: "#95a5a6", emoji: "🌿", paid: false,
   },
   disgust: {
     label: "Unsettled & resistant", labelAr: "منزعج ورافض",
     tags: ["Uneasy", "Tense", "Heavy"], tagsAr: ["متضايق", "متوتر", "ثقيل"],
-    color: "#27ae60", emoji: "🌫️",
+    color: "#27ae60", emoji: "🌫️", paid: false,
   },
+  // ── Nuanced 13 (Groove/Studio only) ─────────────────────────────────────────
   nostalgia: {
     label: "Nostalgic & longing", labelAr: "حنين وشوق",
     tags: ["Wistful", "Tender", "Distant"], tagsAr: ["مشتاق", "حنين", "بعيد"],
-    color: "#e8a87c", emoji: "🌅",
+    color: "#e8a87c", emoji: "🌅", paid: true,
   },
   grief: {
     label: "Grieving & heavy", labelAr: "حزن عميق وثقيل",
     tags: ["Lost", "Heavy", "Hollow"], tagsAr: ["ضائع", "ثقيل", "فارغ"],
-    color: "#4a6fa5", emoji: "🌑",
+    color: "#4a6fa5", emoji: "🌑", paid: true,
   },
   exhaustion: {
     label: "Drained & worn out", labelAr: "تعبان وخلصت طاقتي",
     tags: ["Tired", "Empty", "Numb"], tagsAr: ["تعبان", "فارغ", "خدِر"],
-    color: "#8e9eab", emoji: "🍂",
+    color: "#8e9eab", emoji: "🍂", paid: true,
   },
   euphoria: {
     label: "Euphoric & electric", labelAr: "في قمة السعادة",
     tags: ["Radiant", "Alive", "Free"], tagsAr: ["مشع", "حي", "طاير"],
-    color: "#ffd700", emoji: "✨",
+    color: "#ffd700", emoji: "✨", paid: true,
   },
   tenderness: {
     label: "Tender & warm", labelAr: "حنان ودفء",
     tags: ["Warm", "Soft", "Loving"], tagsAr: ["دافئ", "ناعم", "محب"],
-    color: "#ff8fab", emoji: "🌸",
+    color: "#ff8fab", emoji: "🌸", paid: true,
   },
   frustration: {
     label: "Frustrated & stuck", labelAr: "محبط وواقف في مكاني",
     tags: ["Blocked", "Tense", "Restless"], tagsAr: ["مسدود", "متوتر", "مش قادر"],
-    color: "#e67e22", emoji: "⛓️",
+    color: "#e67e22", emoji: "⛓️", paid: true,
   },
   loneliness: {
     label: "Lonely & isolated", labelAr: "وحيد ومعزول",
     tags: ["Alone", "Distant", "Longing"], tagsAr: ["لوحدي", "بعيد", "مشتاق"],
-    color: "#7f8c8d", emoji: "🌙",
+    color: "#7f8c8d", emoji: "🌙", paid: true,
   },
   wonder: {
     label: "In awe & wonder", labelAr: "مبهور ومندهش",
     tags: ["Open", "Curious", "Expanded"], tagsAr: ["منبهر", "فضولي", "منفتح"],
-    color: "#1abc9c", emoji: "🔭",
+    color: "#1abc9c", emoji: "🔭", paid: true,
   },
   hope: {
     label: "Hopeful & rising", labelAr: "متفائل وعايز أكمل",
     tags: ["Forward", "Light", "Possible"], tagsAr: ["للأمام", "نور", "ممكن"],
-    color: "#f9ca24", emoji: "🌱",
+    color: "#f9ca24", emoji: "🌱", paid: true,
   },
   fedup: {
     label: "Fed up & done", labelAr: "زهقت وما عادش قادر",
     tags: ["Done", "Over it", "Hollow"], tagsAr: ["زهقت", "خلص", "ما عادش"],
-    color: "#b8860b", emoji: "🚪",
+    color: "#b8860b", emoji: "🚪", paid: true,
   },
   passion: {
     label: "Passionate & driven", labelAr: "متحمس وعنده هدف",
     tags: ["Fired up", "Focused", "Burning"], tagsAr: ["مشتعل", "مركز", "مصمم"],
-    color: "#c0392b", emoji: "🎯",
+    color: "#c0392b", emoji: "🎯", paid: true,
   },
   bittersweet: {
     label: "Bittersweet & mixed", labelAr: "حلو ومر في نفس الوقت",
     tags: ["Mixed", "Poignant", "Complex"], tagsAr: ["مختلط", "مؤلم", "معقد"],
-    color: "#9b6b9b", emoji: "🌗",
+    color: "#9b6b9b", emoji: "🌗", paid: true,
   },
   calm: {
     label: "Peaceful & still", labelAr: "مرتاح وفي سلام",
     tags: ["Peaceful", "Grounded", "Present"], tagsAr: ["مرتاح", "ثابت", "حاضر"],
-    color: "#48c9b0", emoji: "🏔️",
+    color: "#48c9b0", emoji: "🏔️", paid: true,
   },
 };
+
+// All mood keys in display order
+const ALL_MOOD_KEYS = [
+  // Core 7
+  "joy","sadness","anger","fear","surprise","neutral","disgust",
+  // Nuanced 13
+  "nostalgia","grief","exhaustion","euphoria","tenderness","frustration",
+  "loneliness","wonder","hope","fedup","passion","bittersweet","calm",
+]
 
 function resolveNuancedEmotion(topEmotion, valence, arousal) {
   if (topEmotion === "joy") {
@@ -221,7 +234,9 @@ const LANG_FLAGS = {
   it:"🇮🇹", nl:"🇳🇱", pl:"🇵🇱", uk:"🇺🇦",
 };
 
-export default function MoodInput({ userId = "", region = null, onMoodDetected, onSubmit }) {
+const isPaid = (plan) => plan === 'groove' || plan === 'studio'
+
+export default function MoodInput({ userId = "", region = null, onMoodDetected, onSubmit, userPlan = 'free', onUpgrade }) {
   const [tab, setTab]                     = useState("voice");
   const [lang, setLang]                   = useState("en");
   const [recording, setRecording]         = useState(false);
@@ -239,7 +254,13 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
   const [quizAnswers, setQuizAnswers] = useState([]);
   const [quizMood, setQuizMood]       = useState(null);
 
+  const paid = isPaid(userPlan)
   const isAr = lang === "ar";
+
+  // Mood keys available to this user
+  const availableMoodKeys = paid
+    ? ALL_MOOD_KEYS
+    : ALL_MOOD_KEYS.filter(k => !EMOTION_CARDS[k].paid)
 
   useEffect(() => {
     return () => {
@@ -277,15 +298,26 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
     }
   };
 
+  // If a nuanced emotion is detected but user is on free plan,
+  // fall back to the core emotion
+  const clampEmotionToPlan = (nuancedKey, coreEmotion) => {
+    if (paid) return nuancedKey
+    if (EMOTION_CARDS[nuancedKey]?.paid) return coreEmotion
+    return nuancedKey
+  }
+
   const buildMood = (data, inputText = "") => {
-    const nuanced = resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
-    const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[data.top_emotion] || {
+    const nuanced  = resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
+    const clamped  = clampEmotionToPlan(nuanced, data.top_emotion)
+    const card     = EMOTION_CARDS[clamped] || EMOTION_CARDS[data.top_emotion] || {
       label: data.top_emotion, labelAr: data.top_emotion,
       tags: [], tagsAr: [], color: "#b09ee0", emoji: "💭",
     };
-    return { ...card, valence: data.valence, energy: data.arousal, confidence: data.confidence,
-      emotion: data.top_emotion, nuancedKey: nuanced, reasoning: data.reasoning,
-      text: inputText || data.transcript || "" };
+    return {
+      ...card, valence: data.valence, energy: data.arousal, confidence: data.confidence,
+      emotion: data.top_emotion, nuancedKey: clamped, reasoning: data.reasoning,
+      text: inputText || data.transcript || "",
+    };
   };
 
   const analyzeVoice = async (audioBlob, mimeType = "audio/webm") => {
@@ -348,8 +380,9 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       const avgV    = totalValence / answers.length;
       const avgA    = totalArousal / answers.length;
       const nuanced = resolveNuancedEmotion(winner, avgV, avgA);
-      const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[winner];
-      const mood    = { ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner };
+      const clamped = clampEmotionToPlan(nuanced, winner)
+      const card    = EMOTION_CARDS[clamped] || EMOTION_CARDS[winner];
+      const mood    = { ...card, emotion: winner, nuancedKey: clamped, valence: avgV, energy: avgA, text: winner };
       setQuizMood(mood); onMoodDetected?.(mood);
     }
   };
@@ -410,6 +443,29 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
   return (
     <div className="mi-root" dir={isAr ? "rtl" : "ltr"}>
 
+      {/* ── Free plan mood nudge (shown above tabs) ── */}
+      {!paid && (
+        <div
+          onClick={() => onUpgrade?.()}
+          style={{
+            background:   'rgba(124,92,231,0.06)',
+            border:       '1px solid rgba(124,92,231,0.2)',
+            borderRadius: '12px 12px 0 0',
+            padding:      '8px 14px',
+            display:      'flex',
+            alignItems:   'center',
+            gap:          8,
+            cursor:       'pointer',
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🔒</span>
+          <p style={{ margin: 0, fontSize: 11, color: '#8b7eb8', flex: 1 }}>
+            <strong style={{ color: '#c4b5f0' }}>13 nuanced moods</strong> unlocked with Groove+
+          </p>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', whiteSpace: 'nowrap' }}>Upgrade →</span>
+        </div>
+      )}
+
       {/* ── Language toggle ── */}
       <div className="mi-lang-toggle">
         <button className={`lang-btn ${!isAr ? "active" : ""}`} onClick={() => setLang("en")}>EN</button>
@@ -463,6 +519,47 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
               <p className="voice-error">{isAr ? "⚠️ تأكد إن الميكروفون شغال" : "⚠️ Make sure your mic is allowed."}</p>
             )}
           </div>
+
+          {/* ── Mood palette (quick pick) ── */}
+          <div className="mood-palette-wrap">
+            <p className="mood-palette-label">
+              {isAr ? "أو اختار مزاجك مباشرة" : "Or pick your mood directly"}
+              {!paid && <span style={{ marginLeft: 6, fontSize: 10, color: '#7c5ce7', fontWeight: 700 }}>• 13 more with Groove+</span>}
+            </p>
+            <div className="mood-palette">
+              {availableMoodKeys.map(key => {
+                const card = EMOTION_CARDS[key]
+                return (
+                  <button
+                    key={key}
+                    className="mood-pill"
+                    style={{ '--mc': card.color }}
+                    onClick={() => {
+                      const mood = { ...card, emotion: key, nuancedKey: key, valence: 0.5, energy: 0.5, text: isAr ? card.labelAr : card.label }
+                      setDetectedMood(mood)
+                      setVoiceStatus('done')
+                      onMoodDetected?.(mood)
+                    }}
+                    title={isAr ? card.labelAr : card.label}
+                  >
+                    {card.emoji}
+                  </button>
+                )
+              })}
+              {/* Locked preview dots for free users */}
+              {!paid && ALL_MOOD_KEYS.filter(k => EMOTION_CARDS[k].paid).slice(0, 3).map(key => (
+                <button
+                  key={`locked-${key}`}
+                  className="mood-pill mood-pill--locked"
+                  onClick={() => onUpgrade?.()}
+                  title="Unlock with Groove+"
+                >
+                  🔒
+                </button>
+              ))}
+            </div>
+          </div>
+
           {detectedMood && voiceStatus === "done" && (
             <div className="result-area">
               <MoodCard mood={detectedMood} showValence />
@@ -538,7 +635,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
                   );
                 })}
               </div>
-              {/* ── Improved Previous / counter / Next ── */}
               <div className="quiz-nav">
                 <button
                   className="quiz-nav-btn"
@@ -570,9 +666,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       )}
 
       <style>{`
-        /* ─────────────────────────────────────────────────────
-           ROOT — dark theme to match the app (was #faf8ff)
-        ───────────────────────────────────────────────────── */
         .mi-root {
           font-family: 'DM Sans', 'Segoe UI', sans-serif;
           max-width: 420px;
@@ -586,7 +679,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255,255,255,.04);
         }
 
-        /* ── Language toggle ── */
         .mi-lang-toggle {
           display: flex;
           justify-content: flex-end;
@@ -604,13 +696,8 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           cursor: pointer;
           transition: all .18s;
         }
-        .lang-btn.active {
-          background: #7c5ce7;
-          color: #fff;
-          border-color: #7c5ce7;
-        }
+        .lang-btn.active { background: #7c5ce7; color: #fff; border-color: #7c5ce7; }
 
-        /* ── Tabs ── */
         .mi-tabs {
           display: flex;
           background: rgba(255, 255, 255, 0.04);
@@ -637,7 +724,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           box-shadow: 0 2px 8px rgba(92,63,199,.15);
         }
 
-        /* ── Panel ── */
         .mi-panel {
           padding: 22px 18px;
           min-height: 320px;
@@ -647,7 +733,6 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           gap: 20px;
         }
 
-        /* ── Voice ── */
         .voice-wrap {
           display: flex;
           flex-direction: column;
@@ -688,7 +773,22 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #7c5ce7; animation: dotBounce .8s ease-in-out infinite alternate; }
         @keyframes dotBounce { from{transform:translateY(0);opacity:.5}to{transform:translateY(-6px);opacity:1} }
 
-        /* ── Text ── */
+        /* Mood palette */
+        .mood-palette-wrap { width: 100%; }
+        .mood-palette-label { font-size: 11px; color: #6b5f8a; margin: 0 0 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+        .mood-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+        .mood-pill {
+          width: 36px; height: 36px; border-radius: 50%;
+          border: 1.5px solid rgba(255,255,255,.1);
+          background: color-mix(in srgb, var(--mc, #7c5ce7) 12%, transparent);
+          font-size: 18px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: transform .18s, border-color .18s, background .18s;
+        }
+        .mood-pill:hover { transform: scale(1.18); border-color: var(--mc, #7c5ce7); background: color-mix(in srgb, var(--mc, #7c5ce7) 25%, transparent); }
+        .mood-pill--locked { opacity: 0.4; font-size: 14px; cursor: pointer; }
+        .mood-pill--locked:hover { opacity: 0.7; transform: scale(1.1); }
+
         .text-wrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
         .text-prompt { font-size: 14px; color: #8b7eb8; margin: 0; font-weight: 500; }
         .text-area {
@@ -707,11 +807,10 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         }
         .text-area::placeholder { color: #4b4570; }
         .text-area:focus { border-color: #7c5ce7; box-shadow: 0 0 0 3px rgba(124,92,231,.12); }
-        .analyse-btn { align-self: flex-end; padding: 10px 22px; border: none; border-radius: 12px; background: #7c5ce7; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .18s, transform .12s; }
+        .analyse-btn { align-self: flex-end; padding: 10px 22px; border: none; border-radius: 12px; background: #7c5ce7; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .18s, transform .12s; font-family: inherit; }
         .analyse-btn:hover:not(:disabled) { background: #6347cc; transform: translateY(-1px); }
         .analyse-btn:disabled { opacity: .4; cursor: default; }
 
-        /* ── Quiz ── */
         .quiz-wrap { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 16px; }
         .quiz-progress { display: flex; gap: 6px; }
         .quiz-pip { width: 24px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.1); transition: background .25s; }
@@ -733,55 +832,15 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           transition: border-color .18s, background .18s, transform .12s, color .18s;
           font-family: inherit;
         }
-        .quiz-opt:hover {
-          border-color: rgba(124,92,231,.5);
-          background: rgba(124,92,231,.1);
-          color: #e0d8ff;
-          transform: translateX(3px);
-        }
-        .quiz-opt.selected {
-          border-color: #7c5ce7;
-          background: rgba(124,92,231,.18);
-          color: #e0d8ff;
-          font-weight: 700;
-        }
+        .quiz-opt:hover { border-color: rgba(124,92,231,.5); background: rgba(124,92,231,.1); color: #e0d8ff; transform: translateX(3px); }
+        .quiz-opt.selected { border-color: #7c5ce7; background: rgba(124,92,231,.18); color: #e0d8ff; font-weight: 700; }
 
-        /* ── Quiz nav — larger, more prominent ── */
-        .quiz-nav {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          width: 100%;
-          gap: 8px;
-          margin-top: 4px;
-        }
-        .quiz-nav-btn {
-          padding: 10px 20px;
-          border: 1.5px solid rgba(124,92,231,.35);
-          border-radius: 12px;
-          background: rgba(124,92,231,.08);
-          color: #a78bfa;
-          font-size: 14px;
-          font-weight: 700;
-          cursor: pointer;
-          font-family: inherit;
-          transition: background .18s, border-color .18s, transform .12s;
-          min-width: 90px;
-          text-align: center;
-        }
-        .quiz-nav-btn:hover:not(:disabled) {
-          background: rgba(124,92,231,.2);
-          border-color: #7c5ce7;
-          transform: translateY(-1px);
-        }
-        .quiz-nav-btn:disabled {
-          opacity: 0.28;
-          cursor: default;
-          transform: none;
-        }
+        .quiz-nav { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; margin-top: 4px; }
+        .quiz-nav-btn { padding: 10px 20px; border: 1.5px solid rgba(124,92,231,.35); border-radius: 12px; background: rgba(124,92,231,.08); color: #a78bfa; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; transition: background .18s, border-color .18s, transform .12s; min-width: 90px; text-align: center; }
+        .quiz-nav-btn:hover:not(:disabled) { background: rgba(124,92,231,.2); border-color: #7c5ce7; transform: translateY(-1px); }
+        .quiz-nav-btn:disabled { opacity: 0.28; cursor: default; transform: none; }
         .quiz-counter { font-size: 13px; color: #4b4570; margin: 0; font-weight: 600; }
 
-        /* ── Result / shared ── */
         .reset-btn { margin-top: 6px; padding: 10px 22px; border: 1.5px solid rgba(124,92,231,.3); border-radius: 12px; background: transparent; color: #a78bfa; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .18s, border-color .18s; font-family: inherit; }
         .reset-btn:hover { background: rgba(124,92,231,.1); border-color: #7c5ce7; }
         .result-area { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; animation: fadeUp .35s ease; }

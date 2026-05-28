@@ -20,7 +20,6 @@ const SCALES = [
   { id: 'B minor', label: 'B Minor', feel: 'Dark & deep'     },
 ]
 
-// Which language codes are "Arabic-family" — match Arabic region artists
 const ARABIC_CODES   = new Set(['ar', 'ar-eg', 'ar-lv', 'ar-gulf', 'ar-ma'])
 const HINDI_CODES    = new Set(['hi', 'ta', 'te', 'bn'])
 const EASTASIA_CODES = new Set(['zh', 'ja', 'ko'])
@@ -28,8 +27,6 @@ const LATIN_CODES    = new Set(['es', 'pt'])
 const EUROPE_CODES   = new Set(['fr', 'de', 'it', 'en'])
 const AFRICA_CODES   = new Set(['yo', 'ha', 'pcm', 'wo'])
 
-// Given the selected language code, return which region's artist list fits best.
-// Falls back to 'global' for English or anything unrecognised.
 function bestRegionForLanguage(langCode, currentRegion) {
   if (!langCode) return currentRegion || 'global'
   if (ARABIC_CODES.has(langCode))   return 'arabic'
@@ -37,34 +34,36 @@ function bestRegionForLanguage(langCode, currentRegion) {
   if (EASTASIA_CODES.has(langCode)) return 'east_asia'
   if (LATIN_CODES.has(langCode))    return 'latin'
   if (AFRICA_CODES.has(langCode))   return 'west_africa'
-  // English or European — use 'global' artists which are all English-friendly,
-  // unless the current region is europe (keep europe artists for European langs)
   if (EUROPE_CODES.has(langCode) && langCode !== 'en') return 'europe'
   return 'global'
 }
 
-export default function CoCreation({ mood, regionDefaults, region, language, onGenerate }) {
+// ── Plan gate helpers ─────────────────────────────────────────────────────────
+const PAID_PLANS = new Set(['groove', 'studio'])
+const isPaid = (plan) => PAID_PLANS.has(plan)
+
+export default function CoCreation({ mood, regionDefaults, region, language, onGenerate, userPlan = 'free', onUpgrade }) {
   const [tempo, setTempo]               = useState(mood?.energy > 0.5 ? 110 : 72)
   const [selectedScale, setScale]       = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
   const [selectedInstr, setInstr]       = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
   const [artistStyles, setArtistStyles] = useState([])
   const [selectedArtist, setArtist]     = useState('')
   const [loadingStyles, setLoadingStyles] = useState(false)
+  const [showUpgradeNudge, setShowUpgradeNudge] = useState(false)
 
-  // Derive which region's artists to show based on the chosen language,
-  // not just the cultural region the user picked.
+  const canUseArtistStyles = isPaid(userPlan)
   const artistRegion = bestRegionForLanguage(language?.code, region?.id)
 
   useEffect(() => {
-    if (!artistRegion) return
+    if (!artistRegion || !canUseArtistStyles) return
     setLoadingStyles(true)
-    setArtist('') // reset whenever language changes
+    setArtist('')
     fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${artistRegion}`)
       .then(r => r.json())
       .then(data => setArtistStyles(data.styles || []))
       .catch(() => setArtistStyles([]))
       .finally(() => setLoadingStyles(false))
-  }, [artistRegion])
+  }, [artistRegion, canUseArtistStyles])
 
   const toggleInstr = (id) => {
     setInstr(prev =>
@@ -86,13 +85,14 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
       tempo_bpm:       tempo,
       scale:           selectedScale,
       instruments:     selectedInstr,
-      artist_style_id: selectedArtist,
+      artist_style_id: canUseArtistStyles ? selectedArtist : '',
     })
   }
 
-  const selectedArtistObj = artistStyles.find(a => a.id === selectedArtist)
+  const selectedArtistObj = canUseArtistStyles
+    ? artistStyles.find(a => a.id === selectedArtist)
+    : null
 
-  // Label shown above the artist grid to explain the filtering
   const langLabel = language?.label || ''
   const artistSectionLabel = langLabel
     ? `🎤 Artist Style — matching ${langLabel}`
@@ -106,15 +106,89 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
         <p className="cc-sub">Customise your music before generating</p>
       </div>
 
-      {/* ── Artist Style (filtered by language) ── */}
+      {/* ── Artist Style — GATED to Groove+ ── */}
       <div className="cc-section">
         <div className="cc-section-top">
           <span className="cc-label">{artistSectionLabel}</span>
           <span className="cc-value">
-            {selectedArtistObj ? selectedArtistObj.label : 'Default style'}
+            {canUseArtistStyles
+              ? (selectedArtistObj ? selectedArtistObj.label : 'Default style')
+              : <span style={{ color: '#f59e0b', fontWeight: 700 }}>🌊 Groove+ only</span>
+            }
           </span>
         </div>
-        {loadingStyles ? (
+
+        {!canUseArtistStyles ? (
+          /* ── Locked state ── */
+          <div
+            onClick={() => setShowUpgradeNudge(v => !v)}
+            style={{
+              position:     'relative',
+              borderRadius: 14,
+              border:       '1.5px dashed rgba(245,158,11,0.35)',
+              background:   'rgba(245,158,11,0.04)',
+              padding:      '18px 16px',
+              cursor:       'pointer',
+              textAlign:    'center',
+              transition:   'border-color .2s, background .2s',
+            }}
+          >
+            {/* Blurred artist grid preview */}
+            <div style={{
+              display:        'grid',
+              gridTemplateColumns: 'repeat(2,1fr)',
+              gap:            8,
+              filter:         'blur(4px)',
+              opacity:        0.35,
+              pointerEvents:  'none',
+              marginBottom:   12,
+            }}>
+              {['Amr Diab','Fairuz','Burna Boy','IU','Shakira','Adele','BTS','Ed Sheeran'].map(name => (
+                <div key={name} style={{ padding:'10px 12px', borderRadius:12, background:'rgba(255,255,255,.05)', border:'1px solid rgba(255,255,255,.08)', fontSize:12, color:'#e0d8ff', fontWeight:600, textAlign:'left' }}>
+                  🎤 {name}
+                </div>
+              ))}
+            </div>
+
+            {/* Lock overlay */}
+            <div style={{
+              position:       'absolute',
+              inset:          0,
+              display:        'flex',
+              flexDirection:  'column',
+              alignItems:     'center',
+              justifyContent: 'center',
+              gap:            8,
+              borderRadius:   'inherit',
+            }}>
+              <div style={{ fontSize: 28 }}>🔒</div>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#fde68a' }}>
+                80+ Artist Styles
+              </p>
+              <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>
+                Unlock with Groove or Studio plan
+              </p>
+              <button
+                onClick={(e) => { e.stopPropagation(); onUpgrade?.() }}
+                style={{
+                  marginTop:    4,
+                  padding:      '8px 20px',
+                  background:   'linear-gradient(135deg, #f59e0b, #fbbf24)',
+                  border:       'none',
+                  borderRadius: 10,
+                  color:        '#1a0f00',
+                  fontSize:     13,
+                  fontWeight:   800,
+                  cursor:       'pointer',
+                  boxShadow:    '0 4px 16px rgba(245,158,11,0.35)',
+                  fontFamily:   "'DM Sans',sans-serif",
+                }}
+              >
+                Upgrade to Groove →
+              </button>
+            </div>
+          </div>
+        ) : loadingStyles ? (
           <div className="cc-artist-loading">Loading styles…</div>
         ) : (
           <div className="cc-artist-grid">
@@ -221,28 +295,12 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
           cursor: pointer; text-align: left;
           transition: all .18s;
         }
-        .cc-artist-opt:hover {
-          border-color: #7c5ce7;
-          background: rgba(124,92,231,.08);
-        }
-        .cc-artist-opt.sel {
-          border-color: #7c5ce7;
-          background: rgba(124,92,231,.15);
-          box-shadow: 0 0 0 1px #7c5ce7;
-        }
+        .cc-artist-opt:hover { border-color: #7c5ce7; background: rgba(124,92,231,.08); }
+        .cc-artist-opt.sel  { border-color: #7c5ce7; background: rgba(124,92,231,.15); box-shadow: 0 0 0 1px #7c5ce7; }
         .cao-emoji { font-size: 18px; line-height: 1; }
-        .cao-label {
-          font-size: 12px; font-weight: 700;
-          color: #e0d8ff; line-height: 1.2;
-        }
-        .cao-desc {
-          font-size: 10px; color: #8b7eb8;
-          line-height: 1.3; margin-top: 1px;
-        }
-        .cc-artist-loading {
-          font-size: 13px; color: #8b7eb8;
-          padding: 12px 0; text-align: center;
-        }
+        .cao-label { font-size: 12px; font-weight: 700; color: #e0d8ff; line-height: 1.2; }
+        .cao-desc  { font-size: 10px; color: #8b7eb8; line-height: 1.3; margin-top: 1px; }
+        .cc-artist-loading { font-size: 13px; color: #8b7eb8; padding: 12px 0; text-align: center; }
       `}</style>
     </div>
   )

@@ -15,13 +15,11 @@ function getAccent(sub = '') {
 }
 
 export default function RewardBadge({ label, sub }) {
-  const [visible, setVisible]   = useState(false)
-  const [exiting, setExiting]   = useState(false)
+  const [visible, setVisible] = useState(false)
+  const [exiting, setExiting] = useState(false)
 
   useEffect(() => {
-    // Mount → slide in
     const t1 = setTimeout(() => setVisible(true), 30)
-    // Start exit animation just before parent removes it
     const t2 = setTimeout(() => setExiting(true), 2600)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
@@ -81,7 +79,7 @@ export default function RewardBadge({ label, sub }) {
           )}
         </div>
 
-        {/* Progress shimmer line */}
+        {/* Progress shrink line */}
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           height: 3, borderRadius: '0 0 20px 20px', overflow: 'hidden',

@@ -1,23 +1,25 @@
 import { useState, useEffect } from 'react'
 
-const REGIONS = [
-  { id: 'arabic',      emoji: '🌙', label: 'Arabic',      desc: 'Maqam scales, oud, qanun',        color: '#c4954f', glow: 'rgba(196,149,79,0.35)'  },
-  { id: 'west_africa', emoji: '🥁', label: 'West Africa', desc: 'Polyrhythm, kora, balafon',        color: '#c47b4f', glow: 'rgba(196,123,79,0.35)'  },
-  { id: 'india',       emoji: '🪔', label: 'India',       desc: 'Ragas, sitar, tabla',              color: '#c4a04f', glow: 'rgba(196,160,79,0.35)'  },
-  { id: 'east_asia',   emoji: '🏮', label: 'East Asia',   desc: 'Pentatonic, erhu, guzheng',        color: '#4f8fc4', glow: 'rgba(79,143,196,0.35)'  },
-  { id: 'latin',       emoji: '🎺', label: 'Latin',       desc: 'Clave rhythms, brass, guitar',     color: '#c44f6b', glow: 'rgba(196,79,107,0.35)'  },
-  { id: 'europe',      emoji: '🎻', label: 'Europe',      desc: 'Classical, strings, piano',        color: '#7b6faf', glow: 'rgba(123,111,175,0.35)' },
-  { id: 'global',      emoji: '🌍', label: 'Global Mix',  desc: 'Blend of world music traditions',  color: '#4fa882', glow: 'rgba(79,168,130,0.35)'  },
+const ALL_REGIONS = [
+  { id: 'arabic',      emoji: '🌙', label: 'Arabic',      desc: 'Maqam scales, oud, qanun',        color: '#c4954f', glow: 'rgba(196,149,79,0.35)',  paid: true  },
+  { id: 'west_africa', emoji: '🥁', label: 'West Africa', desc: 'Polyrhythm, kora, balafon',        color: '#c47b4f', glow: 'rgba(196,123,79,0.35)',  paid: true  },
+  { id: 'india',       emoji: '🪔', label: 'India',       desc: 'Ragas, sitar, tabla',              color: '#c4a04f', glow: 'rgba(196,160,79,0.35)',  paid: true  },
+  { id: 'east_asia',   emoji: '🏮', label: 'East Asia',   desc: 'Pentatonic, erhu, guzheng',        color: '#4f8fc4', glow: 'rgba(79,143,196,0.35)',  paid: true  },
+  { id: 'latin',       emoji: '🎺', label: 'Latin',       desc: 'Clave rhythms, brass, guitar',     color: '#c44f6b', glow: 'rgba(196,79,107,0.35)',  paid: true  },
+  { id: 'europe',      emoji: '🎻', label: 'Europe',      desc: 'Classical, strings, piano',        color: '#7b6faf', glow: 'rgba(123,111,175,0.35)', paid: true  },
+  { id: 'global',      emoji: '🌍', label: 'Global Mix',  desc: 'Blend of world music traditions',  color: '#4fa882', glow: 'rgba(79,168,130,0.35)',  paid: false },
 ]
 
 // Floating music notes for visual atmosphere
 const NOTES = ['♪', '♫', '♩', '♬', '𝄞', '♭', '♮']
 
-export default function Onboarding({ onComplete }) {
-  const [mounted, setMounted]       = useState(false)
-  const [hovered, setHovered]       = useState(null)
-  const [selected, setSelected]     = useState(null)
-  const [particles]                 = useState(() =>
+const isPaid = (plan) => plan === 'groove' || plan === 'studio'
+
+export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade }) {
+  const [mounted, setMounted]   = useState(false)
+  const [hovered, setHovered]   = useState(null)
+  const [selected, setSelected] = useState(null)
+  const [particles]             = useState(() =>
     Array.from({ length: 18 }, (_, i) => ({
       id:       i,
       note:     NOTES[i % NOTES.length],
@@ -30,13 +32,25 @@ export default function Onboarding({ onComplete }) {
     }))
   )
 
+  const paid = isPaid(userPlan)
+
+  // Regions visible to this user:
+  // Free → only Global Mix (not locked, just the one option)
+  // Paid → all 7, no locks
+  const REGIONS = paid
+    ? ALL_REGIONS
+    : ALL_REGIONS // show all but mark paid ones as locked
+
   useEffect(() => {
-    // Stagger mount animation
     const t = setTimeout(() => setMounted(true), 60)
     return () => clearTimeout(t)
   }, [])
 
-  const handleSelect = (region) => {
+  const handleSelect = (region, isLocked) => {
+    if (isLocked) {
+      onUpgrade?.()
+      return
+    }
     setSelected(region.id)
     setTimeout(() => onComplete(region), 320)
   }
@@ -50,11 +64,11 @@ export default function Onboarding({ onComplete }) {
             key={p.id}
             className="ob-note"
             style={{
-              left:             p.left,
-              top:              p.top,
-              fontSize:         p.size,
-              opacity:          p.opacity,
-              animationDelay:   p.delay,
+              left:              p.left,
+              top:               p.top,
+              fontSize:          p.size,
+              opacity:           p.opacity,
+              animationDelay:    p.delay,
               animationDuration: p.duration,
             }}
           >
@@ -67,8 +81,8 @@ export default function Onboarding({ onComplete }) {
       <div
         className="ob-header"
         style={{
-          opacity:   mounted ? 1 : 0,
-          transform: mounted ? 'translateY(0)' : 'translateY(-18px)',
+          opacity:    mounted ? 1 : 0,
+          transform:  mounted ? 'translateY(0)' : 'translateY(-18px)',
           transition: 'opacity .55s ease, transform .55s ease',
         }}
       >
@@ -85,41 +99,77 @@ export default function Onboarding({ onComplete }) {
         </p>
       </div>
 
+      {/* ── Free plan nudge ── */}
+      {!paid && (
+        <div
+          onClick={() => onUpgrade?.()}
+          style={{
+            background:   'linear-gradient(135deg, rgba(124,92,231,0.12), rgba(168,85,247,0.08))',
+            border:       '1.5px solid rgba(124,92,231,0.3)',
+            borderRadius: 14,
+            padding:      '10px 14px',
+            marginBottom: 10,
+            display:      'flex',
+            alignItems:   'center',
+            gap:          10,
+            cursor:       'pointer',
+          }}
+        >
+          <span style={{ fontSize: 18, flexShrink: 0 }}>🔒</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#c4b5f0' }}>
+              6 cultural regions locked
+            </p>
+            <p style={{ margin: 0, fontSize: 11, color: '#6b5f8a' }}>
+              Free plan includes Global Mix only · Upgrade to unlock all
+            </p>
+          </div>
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: '#a78bfa', whiteSpace: 'nowrap',
+            background: 'rgba(124,92,231,.15)', border: '1px solid rgba(124,92,231,.3)',
+            borderRadius: 8, padding: '3px 8px',
+          }}>
+            Upgrade →
+          </span>
+        </div>
+      )}
+
       {/* ── Region grid ── */}
       <div className="ob-regions">
         {REGIONS.map((r, i) => {
-          const isHov = hovered === r.id
-          const isSel = selected === r.id
+          const isLocked = !paid && r.paid
+          const isHov    = hovered === r.id
+          const isSel    = selected === r.id
           return (
             <button
               key={r.id}
-              className={`ob-region ${isSel ? 'ob-region--selected' : ''}`}
+              className={`ob-region ${isSel ? 'ob-region--selected' : ''} ${isLocked ? 'ob-region--locked' : ''}`}
               style={{
-                '--rc':       r.color,
-                '--rg':       r.glow,
-                opacity:      mounted ? 1 : 0,
-                transform:    mounted
+                '--rc':    r.color,
+                '--rg':    r.glow,
+                opacity:   mounted ? (isLocked ? 0.55 : 1) : 0,
+                transform: mounted
                   ? (isSel ? 'scale(0.97)' : isHov ? 'translateX(5px)' : 'translateX(0)')
                   : 'translateX(-22px)',
                 transition: isSel
                   ? 'transform .18s ease, opacity .1s'
                   : `opacity .45s ease ${(i * 0.055).toFixed(2)}s, transform .3s ease`,
               }}
-              onMouseEnter={() => setHovered(r.id)}
+              onMouseEnter={() => !isLocked && setHovered(r.id)}
               onMouseLeave={() => setHovered(null)}
-              onClick={() => handleSelect(r)}
+              onClick={() => handleSelect(r, isLocked)}
             >
               {/* Glow layer */}
               <span
                 className="ob-region-glow"
-                style={{ opacity: isHov || isSel ? 1 : 0 }}
+                style={{ opacity: (isHov || isSel) && !isLocked ? 1 : 0 }}
               />
 
               {/* Emoji */}
               <span
                 className="ob-emoji"
                 style={{
-                  transform: isHov ? 'scale(1.18) rotate(-4deg)' : 'scale(1) rotate(0deg)',
+                  transform:  isHov && !isLocked ? 'scale(1.18) rotate(-4deg)' : 'scale(1) rotate(0deg)',
                   transition: 'transform .25s cubic-bezier(.34,1.56,.64,1)',
                 }}
               >
@@ -132,23 +182,30 @@ export default function Onboarding({ onComplete }) {
                 <span className="ob-region-desc">{r.desc}</span>
               </div>
 
-              {/* Arrow */}
-              <span
-                className="ob-arrow"
-                style={{
-                  transform:  isHov ? 'translateX(4px)' : 'translateX(0)',
-                  opacity:    isHov ? 1 : 0.35,
-                  color:      r.color,
-                  transition: 'transform .22s ease, opacity .22s ease',
-                }}
-              >
-                →
-              </span>
+              {/* Lock icon or arrow */}
+              {isLocked ? (
+                <span className="ob-lock">🔒</span>
+              ) : (
+                <span
+                  className="ob-arrow"
+                  style={{
+                    transform:  isHov ? 'translateX(4px)' : 'translateX(0)',
+                    opacity:    isHov ? 1 : 0.35,
+                    color:      r.color,
+                    transition: 'transform .22s ease, opacity .22s ease',
+                  }}
+                >
+                  →
+                </span>
+              )}
 
               {/* Active bar */}
               <span
                 className="ob-region-bar"
-                style={{ background: r.color, transform: isHov || isSel ? 'scaleY(1)' : 'scaleY(0)' }}
+                style={{
+                  background: r.color,
+                  transform:  (isHov || isSel) && !isLocked ? 'scaleY(1)' : 'scaleY(0)',
+                }}
               />
             </button>
           )
@@ -158,11 +215,8 @@ export default function Onboarding({ onComplete }) {
       {/* ── Skip ── */}
       <p
         className="ob-skip"
-        style={{
-          opacity:   mounted ? 1 : 0,
-          transition: 'opacity .6s ease .5s',
-        }}
-        onClick={() => handleSelect(REGIONS.find(r => r.id === 'global'))}
+        style={{ opacity: mounted ? 1 : 0, transition: 'opacity .6s ease .5s' }}
+        onClick={() => handleSelect(ALL_REGIONS.find(r => r.id === 'global'), false)}
       >
         Skip — use Global Mix
       </p>
@@ -176,7 +230,6 @@ export default function Onboarding({ onComplete }) {
           overflow: hidden;
         }
 
-        /* ── Particles ── */
         .ob-particles {
           position: absolute;
           inset: 0;
@@ -191,12 +244,11 @@ export default function Onboarding({ onComplete }) {
           user-select: none;
         }
         @keyframes obNoteFloat {
-          0%   { transform: translateY(0px) rotate(0deg);   opacity: var(--op, 0.08); }
+          0%   { transform: translateY(0px) rotate(0deg);    opacity: var(--op, 0.08); }
           40%  { transform: translateY(-28px) rotate(12deg); opacity: calc(var(--op, 0.08) * 1.6); }
           100% { transform: translateY(0px) rotate(-6deg);   opacity: var(--op, 0.08); }
         }
 
-        /* ── Header ── */
         .ob-header {
           position: relative;
           z-index: 1;
@@ -241,11 +293,8 @@ export default function Onboarding({ onComplete }) {
           margin: 0;
           line-height: 1.55;
         }
-        .ob-sub-accent {
-          color: #a395c8;
-        }
+        .ob-sub-accent { color: #a395c8; }
 
-        /* ── Regions ── */
         .ob-regions {
           position: relative;
           z-index: 1;
@@ -268,16 +317,23 @@ export default function Onboarding({ onComplete }) {
           transition: border-color .22s ease, background .22s ease;
           width: 100%;
         }
-        .ob-region:hover {
+        .ob-region:hover:not(.ob-region--locked) {
           background: rgba(255, 255, 255, 0.06);
-          border-color: rgba(var(--rc), 0.4);
+          border-color: rgba(176,158,224, 0.4);
         }
         .ob-region--selected {
           border-color: var(--rc) !important;
           background: rgba(255, 255, 255, 0.07) !important;
         }
+        .ob-region--locked {
+          cursor: pointer;
+          filter: saturate(0.4);
+        }
+        .ob-region--locked:hover {
+          opacity: 0.75 !important;
+          filter: saturate(0.6);
+        }
 
-        /* Glow bg layer */
         .ob-region-glow {
           position: absolute;
           inset: 0;
@@ -286,8 +342,6 @@ export default function Onboarding({ onComplete }) {
           transition: opacity .25s ease;
           border-radius: inherit;
         }
-
-        /* Left active bar */
         .ob-region-bar {
           position: absolute;
           left: 0; top: 12%; bottom: 12%;
@@ -332,8 +386,14 @@ export default function Onboarding({ onComplete }) {
           z-index: 1;
           font-weight: 700;
         }
+        .ob-lock {
+          font-size: 14px;
+          flex-shrink: 0;
+          position: relative;
+          z-index: 1;
+          opacity: 0.7;
+        }
 
-        /* ── Skip ── */
         .ob-skip {
           position: relative;
           z-index: 1;
