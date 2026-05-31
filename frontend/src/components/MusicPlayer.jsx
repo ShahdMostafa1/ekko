@@ -1,807 +1,474 @@
-import { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
+import { useState, useRef, useEffect } from "react";
 
-const API = import.meta.env.VITE_API_URL;
+const POLL_INTERVAL = 4000;
+const POLL_TIMEOUT  = 360000;
 
-const PLANS = [
-  {
-    id:       "free",
-    name:     "Free",
-    icon:     "🎧",
-    price:    "$0",
-    priceAnnual: "$0",
-    period:   "forever",
-    color:    "#9ca3af",
-    glow:     "rgba(156,163,175,0.15)",
-    border:   "rgba(156,163,175,0.2)",
-    features: [
-      "5 song generations / day",
-      "Basic moods & regions",
-      "Standard audio quality",
-      "Last 10 songs in history",
-    ],
-  },
-  {
-    id:        "groove",
-    name:      "Groove",
-    icon:      "🌊",
-    price:     "$9",
-    priceAnnual: "$7",
-    period:    "/ month",
-    color:     "#7c5ce7",
-    glow:      "rgba(124,92,231,0.2)",
-    border:    "rgba(124,92,231,0.45)",
-    highlight: true,
-    features: [
-      "50 song generations / day",
-      "All 7 regions & moods",
-      "HD audio quality",
-      "Full song history",
-      "Artist style selection",
-      "Priority generation queue",
-    ],
-  },
-  {
-    id:       "studio",
-    name:     "Studio",
-    icon:     "🎨",
-    price:    "$19",
-    priceAnnual: "$15",
-    period:   "/ month",
-    color:    "#f59e0b",
-    glow:     "rgba(245,158,11,0.15)",
-    border:   "rgba(245,158,11,0.35)",
-    features: [
-      "Unlimited generations",
-      "Everything in Groove",
-      "Commercial license",
-      "API access",
-      "Early feature access",
-      "Priority support",
-    ],
-  },
-];
+export default function MusicPlayer({ params, onSaved }) {
+  const audioRef     = useRef(null);
+  const pollRef      = useRef(null);
+  const pollStartRef = useRef(null);
 
-export default function PlansScreen({ onClose }) {
-  const [user,          setUser]          = useState(null);
-  const [subscription,  setSubscription]  = useState(null);
-  const [invoices,      setInvoices]      = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [actionLoading, setActionLoading] = useState(null);
-  const [error,         setError]         = useState(null);
-  const [successMsg,    setSuccessMsg]    = useState(null);
-  const [showInvoices,  setShowInvoices]  = useState(false);
-  const [annual,        setAnnual]        = useState(false);
-  const [mounted,       setMounted]       = useState(false);
+  const [audioUrl, setAudioUrl]         = useState(params?.audio_url || null);
+  const [taskId]                        = useState(params?.task_id || null);
+  const [polling, setPolling]           = useState(false);
+  const [pollStatus, setPollStatus]     = useState("Writing your song lyrics…");
+  const [playing, setPlaying]           = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [duration, setDuration]         = useState(0);
+  const [audioLoading, setAudioLoading] = useState(true);
+  const [audioError, setAudioError]     = useState(null);
+  const [showLyrics, setShowLyrics]     = useState(false);
+  const [savedOk, setSavedOk]           = useState(false);
+  const [copied, setCopied]             = useState(false);
 
+  const lyrics      = params?.lyrics       || null;
+  const promptUsed  = params?.prompt_used  || "";
+  const region      = params?.region       || "";
+  const regionLabel = params?.region_label || (region ? `🌍 ${region}` : "");
+  const language    = params?.language     || "";
+  const songTitle   = params?.title        || "Your Mood Song";
+
+  // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) {
-        await fetchSub(user.id);
-        await fetchInvoices(user.id);
-      }
-      setLoading(false);
-      setTimeout(() => setMounted(true), 60);
-    })();
-  }, []);
+    if (audioUrl || !taskId || taskId === "mock") return;
+    setPolling(true);
+    pollStartRef.current = Date.now();
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("payment") === "success") {
-      setSuccessMsg("🎉 Payment successful! Your plan is now active. 📧 Check your email for your receipt.");
-      setTimeout(async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) { await fetchSub(user.id); await fetchInvoices(user.id); }
-      }, 3000);
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-    if (params.get("payment") === "cancel") {
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
-
-  async function fetchSub(userId) {
-    try {
-      const res  = await fetch(`${API}/stripe/status/${userId}`);
-      const data = await res.json();
-      setSubscription(data);
-    } catch {
-      setSubscription({ plan: "free", status: "inactive" });
-    }
-  }
-
-  async function fetchInvoices(userId) {
-    try {
-      const res  = await fetch(`${API}/stripe/invoices/${userId}`);
-      const data = await res.json();
-      setInvoices(data.invoices || []);
-    } catch {
-      setInvoices([]);
-    }
-  }
-
-  async function handleUpgrade(planId) {
-    if (!user || planId === "free") return;
-    setActionLoading(planId);
-    setError(null);
-    try {
-      const res = await fetch(`${API}/stripe/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, email: user.email, plan: planId }),
-      });
-      const data = await res.json();
-      if (res.status === 409) {
-        setSuccessMsg(`✅ You already have an active ${planId.charAt(0).toUpperCase() + planId.slice(1)} subscription!`);
+    const poll = async () => {
+      const elapsed = Math.round((Date.now() - pollStartRef.current) / 1000);
+      if (elapsed * 1000 > POLL_TIMEOUT) {
+        setPolling(false);
+        setPollStatus("Took too long. Please try again.");
         return;
       }
-      if (data.url) window.location.href = data.url;
-      else setError(data.detail ?? "Could not create checkout session.");
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setActionLoading(null);
+      if (elapsed < 15)       setPollStatus("Writing your song lyrics…");
+      else if (elapsed < 30)  setPollStatus("Composing the melody…");
+      else if (elapsed < 60)  setPollStatus("Recording vocals…");
+      else if (elapsed < 120) setPollStatus("Mixing the track…");
+      else                    setPollStatus(`Almost there… ${elapsed}s`);
+
+      try {
+        const res  = await fetch(`${import.meta.env.VITE_API_URL}/music/status/${taskId}`);
+        const data = await res.json();
+        if (data.status === "SUCCESS" && data.audio_url) {
+          setAudioUrl(data.audio_url);
+          setPolling(false);
+          return;
+        }
+        if (data.status === "FAILED") {
+          setPolling(false);
+          setPollStatus(`Generation failed: ${data.error || "Unknown error"}`);
+          return;
+        }
+      } catch (err) {
+        console.error("[poll] error:", err);
+      }
+      pollRef.current = setTimeout(poll, POLL_INTERVAL);
+    };
+
+    pollRef.current = setTimeout(poll, 2000);
+    return () => { if (pollRef.current) clearTimeout(pollRef.current); };
+  }, [taskId, audioUrl]);
+
+  // ── Save song once audio URL is ready ─────────────────────
+  useEffect(() => {
+    if (!audioUrl || savedOk || !params?.user_id || params?.mock) return;
+    const stableKey = params?.task_id || params?.audio_url;
+    const body = {
+      user_id: params.user_id, region: params.region || "",
+      region_label: params.region_label || "", mood_label: params.mood_label || "",
+      emotion: params.emotion || "neutral", valence: params.valence ?? 0.5,
+      energy: params.energy ?? 0.5, lyrics: params.lyrics || "",
+      audio_url: audioUrl, prompt_used: params.prompt_used || "",
+      language: params.language || "English", language_code: params.language_code || "",
+      artist_style_id: params.artist_style_id || "", artist_label: params.artist_label || "",
+      title: params.title || "",
+    };
+    fetch(`${import.meta.env.VITE_API_URL}/music/save`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(d => { if (d.saved) { setSavedOk(true); onSaved?.(stableKey); } })
+      .catch(e => console.error("[save] error:", e));
+  }, [audioUrl, savedOk]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Audio event handlers ───────────────────────────────────
+  const onCanPlay        = () => setAudioLoading(false);
+  const onLoadedMetadata = () => setDuration(audioRef.current?.duration || 0);
+  const onTimeUpdate     = () => {
+    const el = audioRef.current;
+    if (el?.duration) setProgress(el.currentTime / el.duration);
+  };
+  const onEnded = () => {
+    setPlaying(false); setProgress(0);
+    if (audioRef.current) audioRef.current.currentTime = 0;
+  };
+  const onError = (e) => {
+    setAudioLoading(false);
+    const el = audioRef.current;
+    if (el && audioUrl) {
+      setTimeout(() => {
+        el.load();
+        el.play()
+          .then(() => { setAudioError(null); setPlaying(true); })
+          .catch(() => setAudioError("Could not load audio. Try opening in a new tab."));
+      }, 1000);
+    } else {
+      setAudioError("Could not load audio. Try opening in a new tab.");
     }
-  }
+  };
 
-  async function handleManage() {
-    if (!user) return;
-    setActionLoading("portal");
-    setError(null);
-    try {
-      const res = await fetch(`${API}/stripe/portal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id }),
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-      else setError(data.detail ?? "Could not open billing portal.");
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setActionLoading(null);
+  const togglePlay = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playing) { el.pause(); setPlaying(false); }
+    else {
+      el.play()
+        .then(() => setPlaying(true))
+        .catch(() => setAudioError("Tap play to start."));
     }
-  }
+  };
 
-  async function handleDownloadInvoice(invoiceId, invoiceNumber) {
-    if (!user) return;
-    setActionLoading(`inv-${invoiceId}`);
-    try {
-      const res = await fetch(`${API}/stripe/invoice-pdf/${user.id}/${invoiceId}`);
-      if (!res.ok) throw new Error("Failed");
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href = url; a.download = `Invoice-${invoiceNumber}.pdf`; a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError("Could not download invoice.");
-    } finally {
-      setActionLoading(null);
+  const seek = (e) => {
+    const el = audioRef.current;
+    if (!el?.duration) return;
+    const rect  = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    el.currentTime = ratio * el.duration;
+    setProgress(ratio);
+  };
+
+  const fmt = (sec) => {
+    if (!sec || isNaN(sec)) return "0:00";
+    return `${Math.floor(sec / 60)}:${Math.floor(sec % 60).toString().padStart(2, "0")}`;
+  };
+
+  const handleShare = async () => {
+    const text = `🎵 Just created "${songTitle}" on Ekko — an AI song made from my mood!\n${window.location.href}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: songTitle, text }); return; } catch {}
     }
-  }
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
-  const currentPlan   = subscription?.plan   ?? "free";
-  const isCancelling  = subscription?.status === "cancelling" || subscription?.cancel_at_period_end;
-  const isFullyActive = subscription?.status === "active" && !isCancelling;
-
-  if (loading) {
+  // ── Generating screen ──────────────────────────────────────
+  if (polling || (!audioUrl && taskId)) {
     return (
-      <div style={s.overlay}>
-        <div style={s.container}>
-          <div style={s.spinnerLg} />
+      <div style={s.card}>
+        <div style={s.orb} />
+        <p style={s.pollLabel}>{pollStatus}</p>
+        {lyrics && (
+          <div style={s.lyricsPreview}>
+            <p style={s.lyricsPreviewLabel}>✍️ Lyrics written</p>
+            <p style={s.lyricsPreviewText}>{lyrics.split("\n").slice(0, 3).join("\n")}…</p>
+          </div>
+        )}
+        <p style={s.pollSub}>AI is creating a full song just for your mood</p>
+        <div style={s.dots}>
+          {[0,1,2].map(i => <span key={i} style={{ ...s.dot, animationDelay: `${i * 0.2}s` }} />)}
         </div>
+        <style>{keyframes}</style>
       </div>
     );
   }
 
+  if (!audioUrl) {
+    return (
+      <div style={s.card}>
+        <p style={s.errorText}>{pollStatus || "No audio available."}</p>
+        <style>{keyframes}</style>
+      </div>
+    );
+  }
+
+  // ── Player ─────────────────────────────────────────────────
   return (
-    <div style={s.overlay}>
-      <div
-        style={{
-          ...s.container,
-          opacity:   mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(16px)",
-          transition: "opacity .45s ease, transform .45s ease",
-        }}
-      >
-        {/* Close */}
-        {onClose && (
-          <button style={s.closeBtn} onClick={onClose}>✕</button>
-        )}
+    <div style={s.card}>
+      <audio
+        ref={audioRef} src={audioUrl}
+        onCanPlay={onCanPlay} onError={onError}
+        onLoadedMetadata={onLoadedMetadata}
+        onTimeUpdate={onTimeUpdate} onEnded={onEnded}
+        preload="auto"
+      />
 
-        {/* Header */}
-        <div style={s.header}>
-          <div style={s.headerIconRow}>
-            <span style={s.headerIcon}>✨</span>
-          </div>
-          <h1 style={s.title}>Choose Your Plan</h1>
-          <p style={s.subtitle}>Unlock your full sonic potential</p>
-
-          {/* Annual toggle */}
-          <div style={s.toggleRow}>
-            <span style={{ ...s.toggleLabel, color: !annual ? "#e0d8ff" : "#4b4570" }}>Monthly</span>
-            <button
-              style={{
-                ...s.toggleTrack,
-                background: annual ? "#7c5ce7" : "rgba(255,255,255,0.1)",
-              }}
-              onClick={() => setAnnual(v => !v)}
-              aria-label="Toggle annual billing"
-            >
-              <span
-                style={{
-                  ...s.toggleThumb,
-                  transform: annual ? "translateX(18px)" : "translateX(2px)",
-                }}
-              />
-            </button>
-            <span style={{ ...s.toggleLabel, color: annual ? "#e0d8ff" : "#4b4570" }}>
-              Annual
-              <span style={s.saveBadge}>Save 20%</span>
-            </span>
-          </div>
+      {/* Header */}
+      <div style={s.header}>
+        <div style={s.albumArt}>
+          <span style={{ fontSize: 28 }}>🎵</span>
+          {playing && <div style={s.albumPulse} />}
         </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={s.title}>{songTitle}</p>
+          <p style={s.subtitle} title={promptUsed}>
+            {regionLabel}{language ? ` · ${language} lyrics` : ""}
+          </p>
+        </div>
+        {savedOk && <div style={s.savedBadge}>✓ Saved</div>}
+      </div>
 
-        {/* Banners */}
-        {successMsg && <div style={s.successBox}>{successMsg}</div>}
-
-        {isFullyActive && currentPlan !== "free" && (
-          <div style={s.activeBadge}>
-            ✅ You're on <strong>{currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong>
-            {" · "}
-            <button
-              style={s.manageLink}
-              onClick={handleManage}
-              disabled={actionLoading === "portal"}
-            >
-              {actionLoading === "portal" ? "Opening…" : "Manage billing →"}
-            </button>
-          </div>
-        )}
-
-        {isCancelling && currentPlan !== "free" && (
-          <div style={s.cancellingBadge}>
-            ⏳ Your <strong>{currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong> plan
-            is cancelled and will end at the current billing period.
-          </div>
-        )}
-
-        {error && <div style={s.errorBox}>{error}</div>}
-
-        {/* Plan cards */}
-        <div style={s.cardsRow}>
-          {PLANS.map((plan, idx) => {
-            const isCurrent     = currentPlan === plan.id && (plan.id === "free" ? true : isFullyActive);
-            const isUpgrading   = actionLoading === plan.id;
-            const displayPrice  = annual && plan.id !== "free" ? plan.priceAnnual : plan.price;
-
+      {/* Waveform bars — animated while playing */}
+      <div style={s.waveformWrap} onClick={seek} role="slider" aria-label="Seek">
+        <div style={s.barsWrap} aria-hidden="true">
+          {Array.from({ length: 40 }).map((_, i) => {
+            const h = 10 + Math.sin(i * 0.55) * 14 + Math.cos(i * 0.28) * 9;
+            const isPast = progress * 40 > i;
             return (
-              <div
-                key={plan.id}
-                style={{
-                  ...s.card,
-                  border:     `1.5px solid ${isCurrent && plan.id !== "free" ? plan.color : plan.border}`,
-                  background: isCurrent && plan.id !== "free"
-                    ? `linear-gradient(160deg, ${plan.glow}, rgba(255,255,255,0.03))`
-                    : "rgba(255,255,255,0.03)",
-                  boxShadow:  plan.highlight
-                    ? `0 0 32px ${plan.glow}, inset 0 1px 0 rgba(255,255,255,.06)`
-                    : isCurrent && plan.id !== "free"
-                    ? `0 0 24px ${plan.glow}`
-                    : "inset 0 1px 0 rgba(255,255,255,.04)",
-                  opacity:    mounted ? 1 : 0,
-                  transform:  mounted ? "translateY(0)" : "translateY(20px)",
-                  transition: `opacity .45s ease ${(idx * 0.08).toFixed(2)}s, transform .45s ease ${(idx * 0.08).toFixed(2)}s, border .2s, box-shadow .2s`,
-                }}
-              >
-                {plan.highlight && (
-                  <div style={{ ...s.popularBadge, background: plan.color }}>
-                    Most Popular
-                  </div>
-                )}
-
-                {/* Plan icon + name */}
-                <div style={s.cardHeader}>
-                  <span style={s.planIcon}>{plan.icon}</span>
-                  <h2 style={{ ...s.planName, color: plan.color }}>{plan.name}</h2>
-                </div>
-
-                {/* Price */}
-                <div style={s.priceRow}>
-                  <span style={s.price}>{displayPrice}</span>
-                  <div style={s.periodWrap}>
-                    <span style={s.period}>{plan.period}</span>
-                    {annual && plan.id !== "free" && (
-                      <span style={{ ...s.annualNote, color: plan.color }}>billed annually</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Divider */}
-                <div style={{ ...s.divider, background: plan.border }} />
-
-                {/* Features */}
-                <ul style={s.featureList}>
-                  {plan.features.map(f => (
-                    <li key={f} style={s.featureItem}>
-                      <span style={{ ...s.checkIcon, color: plan.color }}>✓</span>
-                      <span style={s.featureText}>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {/* CTA */}
-                {isCurrent && plan.id !== "free" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "auto", paddingTop: "14px" }}>
-                    <div style={{ ...s.ctaBtn, background: "rgba(255,255,255,0.05)", color: "#4b5563", textAlign: "center", cursor: "default" }}>
-                      ✅ Current Plan
-                    </div>
-                    <button
-                      style={{ ...s.ctaBtn, background: "transparent", border: `1px solid ${plan.color}`, color: plan.color, cursor: "pointer" }}
-                      onClick={handleManage}
-                      disabled={actionLoading === "portal"}
-                    >
-                      {actionLoading === "portal" ? "Opening…" : "Manage / Cancel"}
-                    </button>
-                  </div>
-                )}
-
-                {isCurrent && plan.id === "free" && (
-                  <div style={{ ...s.ctaBtn, background: "rgba(255,255,255,0.05)", color: "#4b5563", textAlign: "center", cursor: "default", marginTop: "auto", paddingTop: "14px" }}>
-                    Current Plan
-                  </div>
-                )}
-
-                {!isCurrent && plan.id !== "free" && (
-                  <button
-                    style={{
-                      ...s.ctaBtn,
-                      background:  plan.highlight
-                        ? `linear-gradient(135deg, ${plan.color}cc, ${plan.color})`
-                        : "transparent",
-                      border:      plan.highlight ? "none" : `1.5px solid ${plan.color}`,
-                      color:       "#fff",
-                      cursor:      isUpgrading ? "wait" : "pointer",
-                      opacity:     isUpgrading ? 0.7 : 1,
-                      marginTop:   "auto",
-                      paddingTop:  "14px",
-                      boxShadow:   plan.highlight && !isUpgrading ? `0 4px 20px ${plan.glow}` : "none",
-                    }}
-                    disabled={isUpgrading}
-                    onClick={() => handleUpgrade(plan.id)}
-                  >
-                    {isUpgrading ? "Redirecting…" : `Upgrade to ${plan.name}`}
-                  </button>
-                )}
-              </div>
+              <div key={i} style={{
+                ...s.bar,
+                height: `${h}px`,
+                background: isPast
+                  ? `linear-gradient(180deg,#c084fc,#7c5ce7)`
+                  : "rgba(255,255,255,0.13)",
+                animation: playing
+                  ? `barPulse ${0.5 + (i % 5) * 0.12}s ease-in-out ${i * 0.03}s infinite alternate`
+                  : "none",
+                transform: playing && isPast ? undefined : "scaleY(1)",
+              }} />
             );
           })}
         </div>
-
-        {/* Invoice history */}
-        {invoices.length > 0 && (
-          <div style={s.invoiceSection}>
-            <button style={s.invoiceToggle} onClick={() => setShowInvoices(v => !v)}>
-              🧾 Invoice History {showInvoices ? "▲" : "▼"}
-            </button>
-            {showInvoices && (
-              <div style={s.invoiceList}>
-                <p style={s.invoiceNote}>
-                  📧 Receipts are also emailed to <strong>{user?.email}</strong> after each payment.
-                </p>
-                {invoices.map(inv => (
-                  <div key={inv.id} style={s.invoiceRow}>
-                    <div style={s.invoiceInfo}>
-                      <span style={s.invoiceNum}>{inv.number}</span>
-                      <span style={s.invoiceMeta}>
-                        {inv.date} · {inv.plan.charAt(0).toUpperCase() + inv.plan.slice(1)} · ${inv.amount_paid.toFixed(2)}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <span style={s.paidBadge}>Paid</span>
-                      <button
-                        style={s.downloadBtn}
-                        onClick={() => handleDownloadInvoice(inv.id, inv.number)}
-                        disabled={actionLoading === `inv-${inv.id}`}
-                      >
-                        {actionLoading === `inv-${inv.id}` ? "⏳" : "⬇ Invoice"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        <p style={s.footer}>
-          Payments processed securely by Stripe · Cancel anytime · No hidden fees
-        </p>
+        {/* Thin progress line underneath bars */}
+        <div style={s.progressBg}>
+          <div style={{ ...s.progressFill, width: `${progress * 100}%` }} />
+        </div>
       </div>
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {/* Time row */}
+      <div style={s.timeRow}>
+        <span style={s.timeText}>{fmt(duration * progress)}</span>
+        <span style={s.timeText}>{fmt(duration)}</span>
+      </div>
+
+      {/* Play button */}
+      {audioLoading ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={s.spinner} />
+          <span style={s.subtitle}>Loading audio…</span>
+        </div>
+      ) : audioError ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+          <p style={s.errorText}>{audioError}</p>
+          <a href={audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
+        </div>
+      ) : (
+        <button style={s.playBtn} onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
+          {playing ? (
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+              <rect x="5" y="4" width="4" height="16" rx="1.5"/>
+              <rect x="15" y="4" width="4" height="16" rx="1.5"/>
+            </svg>
+          ) : (
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+              <polygon points="6,3 20,12 6,21"/>
+            </svg>
+          )}
+        </button>
+      )}
+
+      {/* Action row — Download + Share */}
+      {!audioLoading && !audioError && (
+        <div style={s.actionRow}>
+          <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 20h18"/>
+            </svg>
+            Download
+          </a>
+          <button style={{ ...s.actionBtn, cursor: "pointer", border: "none" }} onClick={handleShare}>
+            {copied ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span style={{ color: "#34d399" }}>Copied!</span>
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Share
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Lyrics */}
+      {lyrics && (
+        <div style={s.lyricsSection}>
+          <button style={s.lyricsToggle} onClick={() => setShowLyrics(v => !v)}>
+            {showLyrics ? "▲ Hide lyrics" : "✍️ Show lyrics"}
+          </button>
+          {showLyrics && (
+            <div style={s.lyricsBox}>
+              {lyrics.split("\n").map((line, i) => (
+                <p key={i} style={{
+                  ...s.lyricLine,
+                  opacity: line.trim() === "" ? 0 : 1,
+                  marginBottom: line.trim() === "" ? "14px" : "2px",
+                }}>
+                  {line || "\u00A0"}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <style>{keyframes}</style>
     </div>
   );
 }
 
 const s = {
-  overlay: {
-    position:       "fixed",
-    inset:          0,
-    background:     "rgba(0,0,0,0.88)",
-    backdropFilter: "blur(6px)",
-    display:        "flex",
-    alignItems:     "center",
-    justifyContent: "center",
-    zIndex:         1000,
-    padding:        "20px",
-    overflowY:      "auto",
+  card: {
+    background: "linear-gradient(145deg,#140d38,#2a1860 45%,#1a1040)",
+    borderRadius: 28, padding: "32px 28px",
+    // ── WIDER: was 420, now 480 ──
+    maxWidth: 480,
+    margin: "0 auto", boxShadow: "0 20px 60px rgba(92,63,199,.45)",
+    display: "flex", flexDirection: "column", alignItems: "center",
+    gap: 20, color: "#fff", fontFamily: "'DM Sans','Segoe UI',sans-serif",
   },
-  container: {
-    background:    "linear-gradient(160deg, #0d0820 0%, #100c24 50%, #0a0718 100%)",
-    borderRadius:  "24px",
-    padding:       "36px 32px",
-    maxWidth:      "820px",
-    width:         "100%",
-    position:      "relative",
-    fontFamily:    "'DM Sans','Segoe UI',sans-serif",
-    maxHeight:     "90vh",
-    overflowY:     "auto",
-    border:        "1px solid rgba(124,92,231,0.15)",
-    boxShadow:     "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+  orb: {
+    width: 80, height: 80, borderRadius: "50%",
+    background: "radial-gradient(circle,#a855f7,#7c5ce7)",
+    boxShadow: "0 0 40px rgba(168,85,247,.6)",
+    animation: "orbPulse 2s ease-in-out infinite",
   },
-  closeBtn: {
-    position:   "absolute",
-    top:        "16px",
-    right:      "18px",
-    background: "rgba(255,255,255,0.06)",
-    border:     "1px solid rgba(255,255,255,0.1)",
-    borderRadius: "8px",
-    color:      "#6b7280",
-    fontSize:   "1rem",
-    cursor:     "pointer",
-    padding:    "4px 10px",
-    transition: "background .15s, color .15s",
+  pollLabel:  { margin: 0, fontSize: 16, fontWeight: 700, textAlign: "center" },
+  pollSub:    { margin: 0, fontSize: 12, color: "rgba(255,255,255,.5)", textAlign: "center" },
+  dots:       { display: "flex", gap: 6 },
+  dot: {
+    width: 8, height: 8, borderRadius: "50%", background: "#a855f7",
+    display: "inline-block", animation: "dotBounce .8s ease-in-out infinite alternate",
   },
-  header: {
-    textAlign:    "center",
-    marginBottom: "28px",
+  lyricsPreview: {
+    width: "100%", background: "rgba(255,255,255,.06)", borderRadius: 12, padding: "12px 16px",
   },
-  headerIconRow: {
-    marginBottom: "10px",
+  lyricsPreviewLabel: { margin: "0 0 6px", fontSize: 11, color: "#a855f7", fontWeight: 600 },
+  lyricsPreviewText: {
+    margin: 0, fontSize: 13, color: "rgba(255,255,255,.7)",
+    lineHeight: 1.7, whiteSpace: "pre-line", fontStyle: "italic",
   },
-  headerIcon: {
-    fontSize:     "28px",
-    display:      "inline-block",
-    animation:    "spin 8s linear infinite",
-    filter:       "hue-rotate(0deg)",
+  // ── Header with album art circle ──
+  header: { display: "flex", alignItems: "center", gap: 14, width: "100%" },
+  albumArt: {
+    width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+    background: "linear-gradient(135deg,#3b1f80,#6d28d9)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    position: "relative", overflow: "hidden",
+    boxShadow: "0 4px 16px rgba(109,40,217,.4)",
+  },
+  albumPulse: {
+    position: "absolute", inset: 0, borderRadius: 14,
+    background: "rgba(168,85,247,.25)",
+    animation: "albumGlow 1.8s ease-in-out infinite",
   },
   title: {
-    fontSize:     "1.9rem",
-    fontWeight:   800,
-    color:        "#e0d8ff",
-    margin:       "0 0 6px",
-    letterSpacing: "-.02em",
+    margin: 0, fontSize: 19, fontWeight: 700, lineHeight: 1.25,
+    // Allow 2 lines instead of clipping with ellipsis on one
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+    overflow: "hidden",
   },
-  subtitle: {
-    color:    "#6b5f8a",
-    margin:   "0 0 18px",
-    fontSize: "0.93rem",
+  subtitle: { margin: "5px 0 0", fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
+  savedBadge: {
+    fontSize: 11, color: "#34d399", fontWeight: 700,
+    background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)",
+    borderRadius: 20, padding: "4px 10px", flexShrink: 0,
   },
-
-  /* Annual toggle */
-  toggleRow: {
-    display:        "inline-flex",
-    alignItems:     "center",
-    gap:            "10px",
-    background:     "rgba(255,255,255,0.04)",
-    border:         "1px solid rgba(255,255,255,0.08)",
-    borderRadius:   "99px",
-    padding:        "6px 14px",
+  // ── Waveform ──
+  waveformWrap: {
+    width: "100%", cursor: "pointer", position: "relative",
+    height: 58, display: "flex", alignItems: "center",
+    userSelect: "none",
   },
-  toggleLabel: {
-    fontSize:   "13px",
-    fontWeight: 600,
-    transition: "color .2s",
-    display:    "flex",
-    alignItems: "center",
-    gap:        "6px",
+  barsWrap: {
+    display: "flex", alignItems: "center", gap: 2.5,
+    width: "100%", height: 54,
   },
-  toggleTrack: {
-    width:        "38px",
-    height:       "20px",
-    borderRadius: "99px",
-    border:       "none",
-    cursor:       "pointer",
-    position:     "relative",
-    transition:   "background .25s",
-    padding:      0,
-    flexShrink:   0,
+  bar: {
+    flex: 1, borderRadius: 3, transformOrigin: "center",
+    transition: "background .15s, transform .15s",
+    minWidth: 2,
   },
-  toggleThumb: {
-    position:     "absolute",
-    top:          "2px",
-    width:        "16px",
-    height:       "16px",
-    borderRadius: "50%",
-    background:   "#fff",
-    transition:   "transform .22s cubic-bezier(.34,1.56,.64,1)",
-    display:      "block",
+  progressBg: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+    height: 2, background: "rgba(255,255,255,.1)", borderRadius: 1, overflow: "hidden",
   },
-  saveBadge: {
-    background:   "rgba(124,92,231,0.2)",
-    border:       "1px solid rgba(124,92,231,0.3)",
-    color:        "#a78bfa",
-    borderRadius: "99px",
-    padding:      "2px 8px",
-    fontSize:     "11px",
-    fontWeight:   700,
+  progressFill: {
+    height: "100%", background: "linear-gradient(90deg,#7c5ce7,#c084fc)",
+    borderRadius: 1, transition: "width .1s linear",
   },
-
-  successBox: {
-    background:   "rgba(52,211,153,0.1)",
-    border:       "1px solid rgba(52,211,153,0.3)",
-    borderRadius: "12px",
-    padding:      "12px 18px",
-    color:        "#6ee7b7",
-    textAlign:    "center",
-    marginBottom: "16px",
-    fontSize:     "0.875rem",
+  timeRow:  { display: "flex", justifyContent: "space-between", width: "100%", marginTop: -10 },
+  timeText: { fontSize: 11, color: "rgba(255,255,255,.38)", fontVariantNumeric: "tabular-nums" },
+  playBtn: {
+    width: 72, height: 72, borderRadius: "50%", border: "none",
+    background: "linear-gradient(135deg,#7c5ce7,#a855f7)",
+    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+    boxShadow: "0 8px 28px rgba(124,92,231,.55)", transition: "transform .15s, box-shadow .15s",
   },
-  activeBadge: {
-    background:   "rgba(124,92,231,0.1)",
-    border:       "1px solid rgba(124,92,231,0.25)",
-    borderRadius: "12px",
-    padding:      "10px 18px",
-    color:        "#c4b5fd",
-    textAlign:    "center",
-    marginBottom: "18px",
-    fontSize:     "0.85rem",
+  spinner: {
+    width: 24, height: 24, border: "3px solid rgba(255,255,255,.15)",
+    borderTop: "3px solid #a855f7", borderRadius: "50%",
+    animation: "spin .9s linear infinite",
   },
-  cancellingBadge: {
-    background:   "rgba(245,158,11,0.08)",
-    border:       "1px solid rgba(245,158,11,0.25)",
-    borderRadius: "12px",
-    padding:      "10px 18px",
-    color:        "#fde68a",
-    textAlign:    "center",
-    marginBottom: "18px",
-    fontSize:     "0.85rem",
+  errorText: { fontSize: 13, color: "#f87171", margin: 0, textAlign: "center" },
+  openLink:  { fontSize: 12, color: "#a855f7", textDecoration: "underline" },
+  // ── NEW: action row for download + share ──
+  actionRow: {
+    display: "flex", gap: 10, width: "100%",
   },
-  manageLink: {
-    background:     "transparent",
-    border:         "none",
-    color:          "#a78bfa",
-    cursor:         "pointer",
-    textDecoration: "underline",
-    fontSize:       "inherit",
-    padding:        0,
+  actionBtn: {
+    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+    gap: 7, padding: "10px 0",
+    fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.8)",
+    background: "rgba(255,255,255,.07)",
+    border: "1px solid rgba(255,255,255,.13)",
+    borderRadius: 14, textDecoration: "none",
+    transition: "background .2s, transform .12s",
   },
-  errorBox: {
-    background:   "rgba(239,68,68,0.1)",
-    border:       "1px solid rgba(239,68,68,0.3)",
-    borderRadius: "12px",
-    padding:      "10px 18px",
-    color:        "#fca5a5",
-    textAlign:    "center",
-    marginBottom: "16px",
-    fontSize:     "0.875rem",
+  lyricsSection: { width: "100%", display: "flex", flexDirection: "column", gap: 8 },
+  lyricsToggle: {
+    background: "rgba(168,85,247,.12)", border: "1px solid rgba(168,85,247,.28)",
+    borderRadius: 20, padding: "8px 18px", color: "#c084fc",
+    fontSize: 13, fontWeight: 600, cursor: "pointer", alignSelf: "center",
+    transition: "background .2s",
   },
-
-  /* Cards */
-  cardsRow: {
-    display:             "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap:                 "16px",
-    marginBottom:        "28px",
+  lyricsBox: {
+    background: "rgba(255,255,255,.04)", borderRadius: 16,
+    padding: "18px 20px", width: "100%", boxSizing: "border-box",
+    // ── TALLER scroll area ──
+    maxHeight: 300, overflowY: "auto",
+    border: "1px solid rgba(255,255,255,.06)",
   },
-  card: {
-    borderRadius:  "20px",
-    padding:       "24px 20px",
-    position:      "relative",
-    display:       "flex",
-    flexDirection: "column",
-    gap:           "0",
-  },
-  popularBadge: {
-    position:     "absolute",
-    top:          "-12px",
-    left:         "50%",
-    transform:    "translateX(-50%)",
-    padding:      "4px 14px",
-    borderRadius: "99px",
-    fontSize:     "0.7rem",
-    fontWeight:   800,
-    color:        "#fff",
-    whiteSpace:   "nowrap",
-    letterSpacing: ".05em",
-  },
-  cardHeader: {
-    display:     "flex",
-    alignItems:  "center",
-    gap:         "10px",
-    marginBottom: "12px",
-  },
-  planIcon: {
-    fontSize:     "22px",
-    lineHeight:   1,
-  },
-  planName: {
-    fontSize:   "1.2rem",
-    fontWeight: 800,
-    margin:     0,
-    letterSpacing: "-.01em",
-  },
-  priceRow: {
-    display:     "flex",
-    alignItems:  "baseline",
-    gap:         "6px",
-    marginBottom: "14px",
-  },
-  price: {
-    fontSize:   "2.1rem",
-    fontWeight: 800,
-    color:      "#f0ebff",
-    lineHeight: 1,
-  },
-  periodWrap: {
-    display:       "flex",
-    flexDirection: "column",
-    gap:           "2px",
-  },
-  period: {
-    fontSize: "0.82rem",
-    color:    "#4b4570",
-  },
-  annualNote: {
-    fontSize:   "0.7rem",
-    fontWeight: 600,
-    opacity:    0.85,
-  },
-  divider: {
-    height:       "1px",
-    marginBottom: "14px",
-    opacity:      0.5,
-  },
-  featureList: {
-    listStyle:     "none",
-    margin:        0,
-    padding:       0,
-    flexGrow:      1,
-    display:       "flex",
-    flexDirection: "column",
-    gap:           "8px",
-  },
-  featureItem: {
-    display:    "flex",
-    gap:        "8px",
-    alignItems: "flex-start",
-  },
-  checkIcon: {
-    fontSize:   "12px",
-    flexShrink: 0,
-    marginTop:  "2px",
-    fontWeight: 800,
-  },
-  featureText: {
-    fontSize: "0.83rem",
-    color:    "#c4b5f0",
-    lineHeight: 1.4,
-  },
-  ctaBtn: {
-    padding:      "13px",
-    borderRadius: "13px",
-    fontSize:     "0.88rem",
-    fontWeight:   700,
-    transition:   "opacity 0.2s, transform 0.15s",
-    width:        "100%",
-    fontFamily:   "'DM Sans','Segoe UI',sans-serif",
-    display:      "block",
-    boxSizing:    "border-box",
-  },
-
-  /* Invoices */
-  invoiceSection: {
-    borderTop:    "1px solid rgba(255,255,255,0.06)",
-    paddingTop:   "20px",
-    marginBottom: "20px",
-  },
-  invoiceToggle: {
-    background:   "transparent",
-    border:       "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "10px",
-    color:        "#6b5f8a",
-    padding:      "10px 16px",
-    cursor:       "pointer",
-    fontSize:     "0.85rem",
-    width:        "100%",
-    textAlign:    "left",
-    marginBottom: "12px",
-    fontFamily:   "'DM Sans','Segoe UI',sans-serif",
-    transition:   "border-color .18s, color .18s",
-  },
-  invoiceNote: {
-    fontSize:     "0.78rem",
-    color:        "#4b4570",
-    margin:       "0 0 12px",
-    padding:      "10px 14px",
-    background:   "rgba(124,92,231,0.06)",
-    borderRadius: "8px",
-    border:       "1px solid rgba(124,92,231,0.12)",
-  },
-  invoiceList: {
-    display:       "flex",
-    flexDirection: "column",
-    gap:           "8px",
-  },
-  invoiceRow: {
-    display:        "flex",
-    justifyContent: "space-between",
-    alignItems:     "center",
-    background:     "rgba(255,255,255,0.03)",
-    border:         "1px solid rgba(255,255,255,0.06)",
-    borderRadius:   "10px",
-    padding:        "12px 14px",
-    gap:            "12px",
-  },
-  invoiceInfo: {
-    display:       "flex",
-    flexDirection: "column",
-    gap:           "3px",
-    flex:          1,
-    minWidth:      0,
-  },
-  invoiceNum: {
-    fontSize:     "0.83rem",
-    fontWeight:   600,
-    color:        "#e0d8ff",
-    whiteSpace:   "nowrap",
-    overflow:     "hidden",
-    textOverflow: "ellipsis",
-  },
-  invoiceMeta: {
-    fontSize: "0.72rem",
-    color:    "#4b4570",
-  },
-  paidBadge: {
-    background:   "rgba(52,211,153,0.12)",
-    border:       "1px solid rgba(52,211,153,0.25)",
-    color:        "#6ee7b7",
-    borderRadius: "6px",
-    padding:      "3px 10px",
-    fontSize:     "0.72rem",
-    fontWeight:   600,
-    whiteSpace:   "nowrap",
-  },
-  downloadBtn: {
-    background:   "rgba(124,92,231,0.12)",
-    border:       "1px solid rgba(124,92,231,0.25)",
-    color:        "#a78bfa",
-    borderRadius: "6px",
-    padding:      "4px 12px",
-    fontSize:     "0.72rem",
-    fontWeight:   600,
-    cursor:       "pointer",
-    whiteSpace:   "nowrap",
-    fontFamily:   "'DM Sans','Segoe UI',sans-serif",
-  },
-  footer: {
-    textAlign:  "center",
-    color:      "#2d2645",
-    fontSize:   "0.75rem",
-    marginTop:  "8px",
-  },
-  spinnerLg: {
-    width:        "40px",
-    height:       "40px",
-    border:       "3px solid rgba(255,255,255,0.06)",
-    borderTop:    "3px solid #7c5ce7",
-    borderRadius: "50%",
-    animation:    "spin 0.8s linear infinite",
-    margin:       "80px auto",
+  lyricLine: {
+    margin: 0, fontSize: 14, color: "rgba(255,255,255,.82)",
+    lineHeight: 1.85, whiteSpace: "pre-wrap",
   },
 };
+
+const keyframes = `
+  @keyframes barPulse {
+    from { transform: scaleY(0.45); }
+    to   { transform: scaleY(1.55); }
+  }
+  @keyframes orbPulse {
+    0%,100% { box-shadow: 0 0 40px rgba(168,85,247,.6); }
+    50%      { box-shadow: 0 0 90px rgba(168,85,247,1); }
+  }
+  @keyframes dotBounce {
+    from { transform: translateY(0); opacity: .4; }
+    to   { transform: translateY(-8px); opacity: 1; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes albumGlow {
+    0%,100% { opacity: .3; }
+    50%      { opacity: .7; }
+  }
+`;
