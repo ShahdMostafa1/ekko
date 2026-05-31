@@ -11,13 +11,6 @@ import os
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
- 
-class FavouriteRequest(BaseModel):
-    user_id:      str
-    is_favourite: bool
- 
-class DeleteSongRequest(BaseModel):
-    user_id: strz
 
 router = APIRouter(prefix="/music", tags=["Layer 3+4 — Cultural Filter & AI Co-Creation"])
 
@@ -586,43 +579,7 @@ async def get_song_history(user_id: str):
         by_region.setdefault(r, []).append(song)
     return {"songs": songs, "by_region": by_region}
 
-@router.patch("/favourite/{song_id}", summary="Toggle favourite status for a song")
-async def toggle_favourite(song_id: str, req: FavouriteRequest):
-    sb = _get_supabase()
-    if not sb:
-        return {"ok": False, "reason": "Supabase not configured"}
-    try:
-        # Verify the song belongs to this user before updating
-        check = sb.table("songs").select("id").eq("id", song_id).eq("user_id", req.user_id).single().execute()
-        if not check.data:
-            return {"ok": False, "reason": "Song not found or not owned by user"}
- 
-        sb.table("songs").update({"is_favourite": req.is_favourite}).eq("id", song_id).execute()
-        print(f"[music] ❤️ Song {song_id} favourite={req.is_favourite}")
-        return {"ok": True, "is_favourite": req.is_favourite}
-    except Exception as e:
-        print(f"[music] ❌ Favourite update failed: {e}")
-        return {"ok": False, "reason": str(e)}
- 
- 
-@router.delete("/song/{song_id}", summary="Delete a song permanently")
-async def delete_song(song_id: str, req: DeleteSongRequest):
-    sb = _get_supabase()
-    if not sb:
-        return {"ok": False, "reason": "Supabase not configured"}
-    try:
-        # Verify ownership before deleting
-        check = sb.table("songs").select("id").eq("id", song_id).eq("user_id", req.user_id).single().execute()
-        if not check.data:
-            return {"ok": False, "reason": "Song not found or not owned by user"}
- 
-        sb.table("songs").delete().eq("id", song_id).execute()
-        print(f"[music] 🗑️ Song {song_id} deleted by user {req.user_id}")
-        return {"ok": True}
-    except Exception as e:
-        print(f"[music] ❌ Delete failed: {e}")
-        return {"ok": False, "reason": str(e)}
-    
+
 @router.get("/regions", summary="List available cultural regions")
 async def list_regions():
     return {"regions": list(CULTURAL_STYLES.keys())}
