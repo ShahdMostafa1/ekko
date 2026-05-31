@@ -171,7 +171,7 @@ npm run dev
 | Service | Platform | URL |
 |---|---|---|
 | Backend | Render | https://ekko-s8pl.onrender.com |
-| Frontend | Vercel | your Vercel URL |
+| Frontend | Vercel | your Vercel URL | https://ekko-silk.vercel.app
 | Database | Supabase | your Supabase project |
 | Payments | Stripe | dashboard.stripe.com |
 
