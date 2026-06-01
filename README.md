@@ -18,18 +18,48 @@ A gamified AI music app: share how you feel, pick a cultural sound, co-create a 
 
 ## How it works (user flow)
 
+### First-time user (study / thesis flow)
+
 ```
-Sign in → Pick region → Pick language → Share mood → Shape sound → Listen & save → History / Rewards
+Sign in → Pre-test survey → Pick region → Pick language → Share mood → Co-create → Generate → Listen & save
+         → Done → Post-test survey → History / Rewards
 ```
 
-1. **Onboarding** — Choose one of 7 cultural regions (Free: Global Mix only; paid: all regions).
-2. **Mood** — Voice, text, quiz, or tap a mood emoji. Free gets 7 core moods; Groove/Studio get all 20.
-3. **Co-creation** — Tempo, scale, instruments. Artist styles are Groove/Studio only.
-4. **Generate** — Backend writes lyrics and sends a job to Sonauto; the player polls until audio is ready.
-5. **Save** — Songs auto-save to Supabase. Download is Groove/Studio only.
-6. **History** — Search, sort, favourite, rename, delete. Free sees the last 10 tracks only.
+1. **Pre-test survey** — On first login, users complete a structured UX survey (Likert scales, age, genres, favourite artists, expectations). Required before entering the app.
+2. **Onboarding** — Choose one of 7 cultural regions (Free: Global Mix only; paid: all regions).
+3. **Language** — Pick lyrics language for the selected region.
+4. **Mood** — Voice, text, quiz, or tap a mood emoji. Free gets 7 core moods; Groove/Studio get all 20.
+5. **Co-creation** — Tempo, scale, instruments. Artist styles are Groove/Studio only.
+6. **Generate** — Backend writes lyrics and sends a job to Sonauto; the player polls until audio is ready.
+7. **Save & listen** — Songs auto-save to Supabase. Download is Groove/Studio only.
+8. **Post-test survey** — After creating a song, tap **Done — continue →** on the player to complete the post-test (experience ratings, cultural fit, recommendations).
+9. **History / Rewards** — Search, favourite, rename, delete songs; earn XP, badges, and daily challenges.
+
+### Returning user
+
+```
+Sign in → Mood → Co-create → Generate → Listen & save → History / Rewards
+```
+
+Returning users skip surveys unless they open **Sidebar → Study** manually.
 
 Plan limits are enforced on **both** frontend (UI locks) and backend (generate/save/API).
+
+---
+
+## Study surveys (thesis / UX research)
+
+| Phase | When | What is collected |
+|---|---|---|
+| **Pre-test** | First login (required) | Age, music habits, AI familiarity, genres, favourite artists, expectations (Likert scales + options) |
+| **Post-test** | After first song (via **Done** on player) | Experience, mood accuracy, music quality, cultural fit, lyrics, co-creation, NPS-style recommend, best/worst aspects |
+| **Optional text** | Both phases | Further improvements only |
+
+**View results:** Sign in as `admin@ekko.app` → Admin dashboard → **Surveys** tab → filter Pre/Post → **Export CSV**.
+
+**API:** `GET /survey/status/{user_id}` · `POST /survey/submit` · `GET /admin/surveys` (header `X-Admin-Secret`)
+
+Run migrations in Supabase: `backend/migrations/add_study_surveys.sql` and `extend_study_surveys.sql`.
 
 ---
 
@@ -86,25 +116,31 @@ ekko/
 │   │   ├── mood.py             # STT, mood detect, mood logs
 │   │   ├── music.py            # Generate, save, history, usage, PATCH/DELETE
 │   │   ├── api_v1.py           # Studio REST API (generate, status, songs, usage)
-│   │   ├── rewards.py          # XP, streaks, badges
-│   │   └── stripe_router.py    # Checkout, portal, webhooks, API keys
+│   │   ├── rewards.py          # XP, streaks, badges, daily challenges
+│   │   ├── stripe_router.py    # Checkout, portal, webhooks, API keys
+│   │   ├── survey.py           # Pre/post study surveys
+│   │   └── admin.py            # Admin users, songs, survey export
 │   └── migrations/
 │       ├── add_song_favorites.sql
-│       └── add_api_key.sql
+│       ├── add_api_key.sql
+│       ├── add_study_surveys.sql
+│       └── extend_study_surveys.sql
 │
 └── frontend/
     └── src/
-        ├── App.jsx             # Navigation, auth, plan state, generate flow
+        ├── App.jsx             # Navigation, auth, survey routing, generate flow
         ├── utils/planUtils.js  # Client-side plan helpers
+        ├── utils/surveyQuestions.js  # Thesis survey definitions
         └── components/
             ├── Onboarding.jsx      # Region picker (plan-gated)
             ├── MoodInput.jsx       # Voice / text / quiz + emoji moods
             ├── CoCreation.jsx      # Tempo, instruments, artist styles
-            ├── MusicPlayer.jsx     # Play, download, auto-save
+            ├── MusicPlayer.jsx     # Play, download, auto-save, Done → post-test
             ├── SongHistory.jsx     # Library, favourites, download
+            ├── StudySurvey.jsx     # Pre/post UX research forms
             ├── PlansScreen.jsx     # Stripe plans + Studio API key UI
             ├── RewardsScreen.jsx   # XP, badges, streaks
-            └── AdminDashboard.jsx  # Admin CRUD
+            └── AdminDashboard.jsx  # Admin CRUD + survey CSV export
 ```
 
 ---
@@ -135,6 +171,9 @@ Used by the React app. Most routes accept JSON; mood voice uses `multipart/form-
 | `POST` | `/stripe/portal` | Billing portal |
 | `GET` | `/stripe/api-key/{user_id}` | Masked API key status (Studio) |
 | `POST` | `/stripe/api-key` | Generate or rotate Studio API key |
+| `GET` | `/survey/status/{user_id}` | Pre/post survey completion status |
+| `POST` | `/survey/submit` | Submit pre or post study survey |
+| `GET` | `/admin/surveys` | Export all survey responses (admin) |
 
 **Generate body (example):**
 ```json
@@ -201,6 +240,7 @@ Interactive docs: `/docs` when the backend is running.
 | `mood_logs` | Mood detection history |
 | `user_rewards` | Streaks, badges, check-ins |
 | `xp_events` | Idempotent XP awards |
+| `study_surveys` | Pre/post UX research responses |
 
 ### Migrations
 
