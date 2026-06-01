@@ -17,7 +17,7 @@ import DailyChallengeCTA   from './components/DailyChallengeCTA'
 import StudySurvey         from './components/StudySurvey'
 import { wasDailyChallengeDismissed, markDailyChallengeDismissed } from './utils/dailyChallenges'
 import { computeBadgeStats, getNewlyEarnedBadges, markBadgeAnnounced } from './utils/badges'
-import { EKKO_TAGLINE, EKKO_HOOK_SHORT, fetchSurveyStatus } from './utils/tagline'
+import { EKKO_TAGLINE, EKKO_HOOK_SHORT, fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
 import './App.css'
 
 
@@ -133,6 +133,7 @@ export default function App() {
   const [badgeRefreshKey, setBadgeRefreshKey]       = useState(0)
   const [surveyPhase, setSurveyPhase]               = useState('pre')
   const [surveyLocked, setSurveyLocked]             = useState(false)
+  const [surveyStatus, setSurveyStatus]             = useState(null)
 
   const regionXpAwardedRef = useRef(false)
   const moodSessionIdRef   = useRef(null)
@@ -374,18 +375,25 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const routeAfterAuth = useCallback(async (authUser, profile) => {
-    const status = await fetchSurveyStatus(authUser.id)
-    if (!status.pre_done) {
-      setSurveyPhase('pre')
-      setSurveyLocked(true)
-      navigateTo('survey', { reset: true })
-      scheduleDailyChallenge()
+    const cached = getCachedSurveyStatus(authUser.id)
+    const status = cached || await fetchSurveyStatus(authUser.id)
+    setSurveyStatus(status)
+    if (status.pre_done) {
+      routeToAppHome(profile)
       return
     }
-    routeToAppHome(profile)
+    setSurveyPhase('pre')
+    setSurveyLocked(true)
+    navigateTo('survey', { reset: true })
+    scheduleDailyChallenge()
   }, [routeToAppHome])
 
   const handleSurveyComplete = useCallback((phase) => {
+    const userId = userRef.current?.id
+    if (userId) {
+      patchSurveyStatusCache(userId, { [`${phase}_done`]: true })
+      setSurveyStatus(prev => ({ ...(prev || {}), [`${phase}_done`]: true }))
+    }
     setSurveyLocked(false)
     if (phase === 'pre') {
       const reg = homeRegionRef.current
@@ -396,10 +404,18 @@ export default function App() {
     navigateTo('mood')
   }, [routeToAppHome])
 
+  const handleSurveyStatusChange = useCallback((status) => {
+    setSurveyStatus(status)
+    const userId = userRef.current?.id
+    if (userId) patchSurveyStatusCache(userId, status)
+  }, [])
+
   const goToPostSurvey = useCallback(async () => {
     const currentUser = userRef.current
     if (!currentUser) return
-    const status = await fetchSurveyStatus(currentUser.id)
+    const cached = getCachedSurveyStatus(currentUser.id)
+    const status = cached || await fetchSurveyStatus(currentUser.id)
+    setSurveyStatus(status)
     if (status.post_done) {
       setMusicParams(null)
       navigateTo('mood')
@@ -462,6 +478,8 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
+        clearSurveyStatusCache(userRef.current?.id)
+        setSurveyStatus(null)
         setUser(null); userRef.current = null
         regionXpAwardedRef.current = false
         setXp(0); setRegion(null); setLanguage(null)
@@ -610,6 +628,7 @@ export default function App() {
           const VALID = ['mood','history','rewards','plans','survey','language','cocreation','player']
           if (!VALID.includes(dest)) return
           if (screen === 'player' && dest !== 'player') setMusicParams(null)
+          if (dest === 'survey') setSurveyLocked(false)
           navigateTo(dest)
           setSidebarOpen(false)
         }}
@@ -753,7 +772,9 @@ export default function App() {
             userId={userRef.current?.id || user?.id || ''}
             initialPhase={surveyPhase}
             lockPhase={surveyLocked}
+            initialStatus={surveyStatus}
             onComplete={handleSurveyComplete}
+            onStatusChange={handleSurveyStatusChange}
           />
         )}
       </main>

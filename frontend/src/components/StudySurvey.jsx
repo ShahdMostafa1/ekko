@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   PRE_QUESTIONS,
   POST_QUESTIONS,
@@ -135,22 +135,39 @@ function QuestionField({ q, form, setForm }) {
   return null
 }
 
-export default function StudySurvey({ userId = '', initialPhase = null, lockPhase = false, onComplete }) {
+export default function StudySurvey({
+  userId = '',
+  initialPhase = null,
+  lockPhase = false,
+  initialStatus = null,
+  onComplete,
+  onStatusChange,
+}) {
   const [phase, setPhase]           = useState(initialPhase || 'pre')
-  const [status, setStatus]         = useState({ pre_done: false, post_done: false })
-  const [loading, setLoading]       = useState(true)
+  const [status, setStatus]         = useState(initialStatus || { pre_done: false, post_done: false })
+  const [loading, setLoading]       = useState(!initialStatus)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone]             = useState(false)
   const [error, setError]           = useState('')
   const [form, setForm]             = useState({ ...EMPTY_SURVEY_FORM })
+  const autoSkippedRef              = useRef(false)
+
+  useEffect(() => {
+    if (initialStatus) {
+      setStatus(initialStatus)
+      setLoading(false)
+    }
+  }, [initialStatus])
 
   useEffect(() => {
     if (!userId) { setLoading(false); return }
+    if (initialStatus) return
     fetch(`${API}/survey/status/${userId}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return
         setStatus(data)
+        onStatusChange?.(data)
         if (!initialPhase) {
           if (!data.pre_done) setPhase('pre')
           else if (!data.post_done) setPhase('post')
@@ -158,7 +175,16 @@ export default function StudySurvey({ userId = '', initialPhase = null, lockPhas
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [userId, initialPhase])
+  }, [userId, initialPhase, initialStatus, onStatusChange])
+
+  const isPre = phase === 'pre'
+  const phaseDone = isPre ? status.pre_done : status.post_done
+
+  useEffect(() => {
+    if (loading || !lockPhase || !phaseDone || autoSkippedRef.current) return
+    autoSkippedRef.current = true
+    onComplete?.(phase)
+  }, [loading, lockPhase, phaseDone, phase, onComplete])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -185,7 +211,9 @@ export default function StudySurvey({ userId = '', initialPhase = null, lockPhas
         throw new Error(data.detail || `HTTP ${res.status}`)
       }
       setDone(true)
-      setStatus(s => ({ ...s, [`${phase}_done`]: true }))
+      const nextStatus = { ...status, [`${phase}_done`]: true }
+      setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
       if (!lockPhase) onComplete?.(phase)
     } catch (err) {
       setError(err.message || 'Could not save survey.')
@@ -194,10 +222,45 @@ export default function StudySurvey({ userId = '', initialPhase = null, lockPhas
     }
   }
 
-  if (loading) {
+  if (loading || (lockPhase && phaseDone)) {
     return (
       <div className="ss-root">
-        <p className="ss-muted">Loading survey…</p>
+        <p className="ss-muted">{lockPhase && phaseDone ? 'Continuing…' : 'Loading survey…'}</p>
+      </div>
+    )
+  }
+
+  if (phaseDone && !done) {
+    return (
+      <div className="ss-root ss-root--done">
+        <div className="ss-done-icon">✓</div>
+        <h2 className="ss-title">Already completed</h2>
+        <p className="ss-sub">
+          You finished the {isPre ? 'pre-study' : 'post-study'} survey. Thanks — we only need one response per account for each phase.
+        </p>
+        {!lockPhase && (
+          <div className="ss-phase-tabs">
+            <button
+              type="button"
+              className={`ss-phase-tab ${phase === 'pre' ? 'ss-phase-tab--active' : ''}`}
+              onClick={() => setPhase('pre')}
+            >
+              Pre-test {status.pre_done && '✓'}
+            </button>
+            <button
+              type="button"
+              className={`ss-phase-tab ${phase === 'post' ? 'ss-phase-tab--active' : ''}`}
+              onClick={() => setPhase('post')}
+            >
+              Post-test {status.post_done && '✓'}
+            </button>
+          </div>
+        )}
+        {!lockPhase && (
+          <button type="button" className="ss-btn" onClick={() => onComplete?.(phase)}>
+            Back to Ekko →
+          </button>
+        )}
       </div>
     )
   }
@@ -220,8 +283,6 @@ export default function StudySurvey({ userId = '', initialPhase = null, lockPhas
     )
   }
 
-  const isPre = phase === 'pre'
-  const phaseDone = isPre ? status.pre_done : status.post_done
   const questions = isPre ? PRE_QUESTIONS : POST_QUESTIONS
 
   return (
@@ -253,10 +314,6 @@ export default function StudySurvey({ userId = '', initialPhase = null, lockPhas
             Post-test {status.post_done && '✓'}
           </button>
         </div>
-      )}
-
-      {phaseDone && (
-        <p className="ss-banner">You already completed this phase — submitting again will update your answers.</p>
       )}
 
       <form className="ss-form" onSubmit={handleSubmit}>
