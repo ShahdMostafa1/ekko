@@ -1,3 +1,11 @@
 venv/
 .env
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Accidental nested clone (repo inside repo)
+/ekko/
