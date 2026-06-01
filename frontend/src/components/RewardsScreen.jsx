@@ -1,5 +1,12 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { getTodayChallenge } from '../utils/dailyChallenges'
+import {
+  BADGES,
+  computeBadgeStats,
+  isBadgeEarned,
+  getNewlyEarnedBadges,
+  markBadgeAnnounced,
+} from '../utils/badges'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 const RANKS = [
@@ -9,27 +16,6 @@ const RANKS = [
   { id: 'artist',    label: 'Artist',      min: 300,  max: 599,      color: '#f59e0b', glow: '#f59e0b44', icon: '🎨' },
   { id: 'maestro',   label: 'Maestro',     min: 600,  max: 999,      color: '#f472b6', glow: '#f472b644', icon: '🏆' },
   { id: 'legend',    label: 'Legend',      min: 1000, max: Infinity, color: '#a855f7', glow: '#a855f744', icon: '⭐' },
-]
-
-const BADGES = [
-  { id: 'first_mood',   emoji: '🌱', label: 'First Note',     desc: 'Share your first mood',            how: 'Share any mood',                  xpNeeded: 0,    songsNeeded: 0, streakNeeded: 0,  special: false },
-  { id: 'first_song',   emoji: '🎵', label: 'Born to Create', desc: 'Generated your first track',       how: 'Generate a song',                 xpNeeded: 0,    songsNeeded: 1, streakNeeded: 0,  special: false },
-  { id: 'multilingual', emoji: '🌍', label: 'Polyglot',       desc: 'Made songs in 3 languages',        how: 'Try 3 different language regions', xpNeeded: 0,    songsNeeded: 3, streakNeeded: 0,  special: false },
-  { id: 'streak_3',     emoji: '🔥', label: 'On Fire',        desc: '3-day check-in streak',            how: 'Check in 3 days in a row',        xpNeeded: 0,    songsNeeded: 0, streakNeeded: 3,  special: false },
-  { id: 'streak_7',     emoji: '⚡', label: 'Electric',       desc: '7-day streak — unstoppable',       how: 'Check in 7 days in a row',        xpNeeded: 0,    songsNeeded: 0, streakNeeded: 7,  special: false },
-  { id: 'composer_5',   emoji: '🎼', label: 'Prolific',       desc: 'Created 5 tracks',                 how: 'Generate 5 songs total',          xpNeeded: 0,    songsNeeded: 5, streakNeeded: 0,  special: false },
-  { id: 'xp_300',       emoji: '💎', label: 'Diamond Mind',   desc: 'Reached 300 XP',                   how: 'Earn 300 XP',                     xpNeeded: 300,  songsNeeded: 0, streakNeeded: 0,  special: false },
-  { id: 'night_owl',    emoji: '🦉', label: 'Night Owl',      desc: 'Created a song after midnight',    how: 'Generate a song after midnight',  xpNeeded: 0,    songsNeeded: 0, streakNeeded: 0,  special: true  },
-  { id: 'streak_30',    emoji: '🌙', label: 'Moonwalker',     desc: '30-day streak — legendary',        how: 'Check in 30 days in a row',       xpNeeded: 0,    songsNeeded: 0, streakNeeded: 30, special: false },
-  { id: 'xp_1000',      emoji: '⭐', label: 'Legend',         desc: 'Hit 1000 XP — you are the music', how: 'Earn 1000 XP',                    xpNeeded: 1000, songsNeeded: 0, streakNeeded: 0,  special: false },
-]
-
-const DAILY_CHALLENGES = [
-  { id: 'dc1', emoji: '🌅', label: 'Morning Mood',  desc: 'Share a mood before noon',  xp: 15 },
-  { id: 'dc2', emoji: '🎭', label: 'Emotion Flip',  desc: 'Try a new region today',    xp: 20 },
-  { id: 'dc3', emoji: '🌙', label: 'Night Session', desc: 'Create a song after 9 PM',  xp: 25 },
-  { id: 'dc4', emoji: '🎲', label: 'Random Vibes',  desc: 'Use the quiz mood input',   xp: 15 },
-  { id: 'dc5', emoji: '🔁', label: 'Double Down',   desc: 'Generate 2 songs today',    xp: 30 },
 ]
 
 const REGION_META = {
@@ -50,12 +36,129 @@ function getNextRank(xp) {
   const idx = RANKS.findIndex(r => xp >= r.min && xp <= r.max)
   return idx < RANKS.length - 1 ? RANKS[idx + 1] : null
 }
-function isBadgeEarned(badge, xp, streak, totalSongs) {
-  if (badge.special)                                         return false
-  if (badge.xpNeeded     > 0 && xp         < badge.xpNeeded)    return false
-  if (badge.streakNeeded > 0 && streak      < badge.streakNeeded) return false
-  if (badge.songsNeeded  > 0 && totalSongs  < badge.songsNeeded)  return false
-  return true
+// ── Badge Earned Popup ────────────────────────────────────────────────────────
+function BadgeEarnedPopup({ badge, onClose }) {
+  const [visible, setVisible] = useState(false)
+  const [leaving, setLeaving] = useState(false)
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setVisible(true), 30)
+    const t2 = setTimeout(() => handleClose(), 5000)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [])
+
+  const handleClose = () => {
+    setLeaving(true)
+    setTimeout(onClose, 400)
+  }
+
+  const isShowing = visible && !leaving
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 2000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 24,
+      background: isShowing ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0)',
+      backdropFilter: isShowing ? 'blur(6px)' : 'blur(0px)',
+      transition: 'background .35s ease, backdrop-filter .35s ease',
+      pointerEvents: isShowing ? 'auto' : 'none',
+    }}>
+      <div style={{
+        background: 'linear-gradient(145deg, #1a0f3a 0%, #2a1560 50%, #1a0f3a 100%)',
+        border: '1.5px solid rgba(168,85,247,0.6)',
+        borderRadius: 28,
+        padding: '36px 28px 28px',
+        maxWidth: 340, width: '100%',
+        textAlign: 'center',
+        boxShadow: '0 0 60px rgba(168,85,247,0.35), 0 24px 64px rgba(0,0,0,0.7)',
+        position: 'relative', overflow: 'hidden',
+        opacity: isShowing ? 1 : 0,
+        transform: isShowing
+          ? 'translateY(0) scale(1)'
+          : leaving
+          ? 'translateY(-20px) scale(0.95)'
+          : 'translateY(30px) scale(0.92)',
+        transition: 'opacity .4s cubic-bezier(.34,1.56,.64,1), transform .4s cubic-bezier(.34,1.56,.64,1)',
+        pointerEvents: isShowing ? 'auto' : 'none',
+      }}>
+        {/* Shimmer */}
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none',
+          background: 'linear-gradient(135deg, transparent 40%, rgba(168,85,247,0.08) 50%, transparent 60%)',
+          animation: 'badgeShimmer 2.5s ease-in-out infinite',
+        }} />
+
+        {/* Confetti */}
+        {isShowing && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', borderRadius: 'inherit' }}>
+            {[...Array(12)].map((_, i) => (
+              <div key={i} style={{
+                position: 'absolute',
+                left: `${8 + i * 7.5}%`, top: '-8px',
+                width: `${4 + (i % 3) * 2}px`, height: `${4 + (i % 3) * 2}px`,
+                borderRadius: i % 2 === 0 ? '50%' : '2px',
+                background: ['#a855f7','#f59e0b','#34d399','#60a5fa','#f472b6','#fbbf24',
+                             '#a855f7','#34d399','#f59e0b','#60a5fa','#f472b6','#a855f7'][i],
+                animation: `confettiFall ${1.2 + (i % 4) * 0.3}s ease-in ${i * 0.08}s forwards`,
+              }} />
+            ))}
+          </div>
+        )}
+
+        {/* NEW BADGE pill */}
+        <div style={{
+          display: 'inline-block',
+          background: 'linear-gradient(90deg, #a855f7, #7c3aed)',
+          borderRadius: 99, padding: '4px 14px',
+          fontSize: 10, fontWeight: 800, color: '#fff',
+          letterSpacing: '.1em', marginBottom: 20,
+          fontFamily: "'Syne', sans-serif",
+          boxShadow: '0 4px 16px rgba(168,85,247,0.4)',
+        }}>
+          🏅 NEW BADGE UNLOCKED
+        </div>
+
+        {/* Emoji with glow ring */}
+        <div style={{
+          width: 88, height: 88, borderRadius: '50%',
+          background: 'radial-gradient(circle at 38% 35%, rgba(168,85,247,0.35), rgba(124,92,231,0.1))',
+          border: '2px solid rgba(168,85,247,0.5)',
+          boxShadow: '0 0 32px rgba(168,85,247,0.5), inset 0 0 20px rgba(168,85,247,0.1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 44, margin: '0 auto 18px',
+          animation: 'badgeGlow 2s ease-in-out infinite',
+        }}>
+          {badge.emoji}
+        </div>
+
+        <h2 style={{ margin: '0 0 10px', fontSize: 22, fontWeight: 800, color: '#e0d8ff', fontFamily: "'Syne', sans-serif", lineHeight: 1.2 }}>
+          {badge.label}
+        </h2>
+
+        <p style={{ margin: '0 0 22px', fontSize: 14, color: '#a78bfa', lineHeight: 1.6, fontWeight: 500 }}>
+          {badge.why}
+        </p>
+
+        <button
+          onClick={handleClose}
+          style={{
+            width: '100%', padding: '13px',
+            background: 'rgba(168,85,247,0.15)',
+            border: '1.5px solid rgba(168,85,247,0.35)',
+            borderRadius: 14, color: '#c4b5f0',
+            fontSize: 14, fontWeight: 700, cursor: 'pointer',
+            fontFamily: "'DM Sans', sans-serif",
+            transition: 'background .2s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(168,85,247,0.25)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(168,85,247,0.15)'}
+        >
+          Awesome! 🎉
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -70,8 +173,8 @@ function Particle({ x, y, color }) {
   )
 }
 
-function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
-  const earned    = isBadgeEarned(badge, xp, streak, totalSongs)
+function BadgeCard({ badge, badgeStats, onTap }) {
+  const earned = isBadgeEarned(badge, badgeStats)
   const [burst, setBurst] = useState(false)
 
   const handleTap = () => {
@@ -121,13 +224,19 @@ function BadgeCard({ badge, xp, streak, totalSongs, onTap }) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function RewardsScreen({ xp = 0, userId = '' }) {
+export default function RewardsScreen({ xp = 0, userId = '', onStartChallenge, badgeRefreshKey = 0 }) {
   const [byRegion,   setByRegion]   = useState({})
-  const [totalSongs, setTotalSongs] = useState(0)
+  const [songs,      setSongs]      = useState([])
   const [moodLogs,   setMoodLogs]   = useState([])
   const [activeTab,  setActiveTab]  = useState('progress')
   const [tooltip,    setTooltip]    = useState(null)
   const [mounted,    setMounted]    = useState(false)
+  const [dailyDone,  setDailyDone]  = useState(false)
+
+  // Badge popup queue
+  const [badgeQueue,   setBadgeQueue]   = useState([])
+  const [currentBadge, setCurrentBadge] = useState(null)
+  const prevEarnedRef = useRef(null)
 
   useEffect(() => { setTimeout(() => setMounted(true), 50) }, [])
 
@@ -138,14 +247,23 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       .then(r => r.json())
       .then(data => {
         setByRegion(data.by_region || {})
-        setTotalSongs((data.songs || []).length)
+        setSongs(data.songs || [])
       })
       .catch(() => {})
     fetch(`${import.meta.env.VITE_API_URL}/mood/history/${userId}`)
       .then(r => r.json())
       .then(data => setMoodLogs(data.logs || []))
       .catch(() => {})
-  }, [userId])
+    fetch(`${import.meta.env.VITE_API_URL}/rewards/daily-challenge/${userId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setDailyDone(!!data.completed) })
+      .catch(() => {})
+  }, [userId, badgeRefreshKey])
+
+  const badgeStats = useMemo(
+    () => computeBadgeStats({ songs, moodLogs, xp }),
+    [songs, moodLogs, xp],
+  )
 
   // ── Streak & calendar ─────────────────────────────────
   const logDates = new Set(moodLogs.map(l => new Date(l.created_at).toDateString()))
@@ -156,22 +274,45 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
     d.setDate(today.getDate() - (todayIdx - i))
     return { label, active: logDates.has(d.toDateString()), today: i === todayIdx, future: i > todayIdx }
   })
-  let streak = 0
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(today); d.setDate(today.getDate() - i)
-    if (logDates.has(d.toDateString())) streak++; else break
-  }
+  const { streak } = badgeStats
 
   const rank         = getRank(xp)
   const nextRank     = getNextRank(xp)
   const rankPct      = nextRank ? Math.min(100, Math.round(((xp - rank.min) / (nextRank.min - rank.min)) * 100)) : 100
-  const dayOfYear    = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000)
-  const dailyChall   = DAILY_CHALLENGES[dayOfYear % DAILY_CHALLENGES.length]
-  const earnedBadges = BADGES.filter(b => isBadgeEarned(b, xp, streak, totalSongs)).length
+  const dailyChall   = getTodayChallenge(today)
+  const earnedBadges = BADGES.filter(b => isBadgeEarned(b, badgeStats)).length
   const regions      = Object.keys(byRegion)
 
+  // ── Detect newly earned badges and queue popups ───────
+  useEffect(() => {
+    if (!userId) return
+
+    const newlyEarned = getNewlyEarnedBadges(badgeStats, userId)
+
+    if (prevEarnedRef.current === null) {
+      // First load — mark all currently earned badges as announced (no retroactive popups)
+      BADGES.filter(b => isBadgeEarned(b, badgeStats)).forEach(b => markBadgeAnnounced(userId, b.id))
+      prevEarnedRef.current = true
+      return
+    }
+
+    if (newlyEarned.length > 0) {
+      newlyEarned.forEach(b => markBadgeAnnounced(userId, b.id))
+      setBadgeQueue(q => [...q, ...newlyEarned])
+    }
+  }, [badgeStats, userId])
+
+  // ── Drain queue one popup at a time ──────────────────
+  useEffect(() => {
+    if (!currentBadge && badgeQueue.length > 0) {
+      const [next, ...rest] = badgeQueue
+      setCurrentBadge(next)
+      setBadgeQueue(rest)
+    }
+  }, [badgeQueue, currentBadge])
+
   return (
-    <div style={{
+    <div className="rh-root" style={{
       fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
       maxWidth: 440, margin: '0 auto', paddingBottom: 48,
       opacity: mounted ? 1 : 0,
@@ -225,28 +366,36 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       </div>
 
       {/* ── Daily Challenge ── */}
-      <div style={{
-        background: 'linear-gradient(135deg, rgba(251,191,36,.08), rgba(245,158,11,.04))',
-        border: '1.5px solid rgba(251,191,36,.25)', borderRadius: 18,
-        padding: '16px 18px', marginBottom: 20,
-        display: 'flex', alignItems: 'center', gap: 14,
-        position: 'relative', overflow: 'hidden',
-      }}>
-        <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(251,191,36,.06)' }} />
+      <div
+        className="rh-daily-challenge"
+        onClick={() => onStartChallenge?.()}
+        style={{
+          background: 'linear-gradient(135deg, rgba(251,191,36,.08), rgba(245,158,11,.04))',
+          border: '1.5px solid rgba(251,191,36,.25)', borderRadius: 18,
+          padding: '16px 18px', marginBottom: 20,
+          display: 'flex', alignItems: 'center', gap: 14,
+          position: 'relative', overflow: 'hidden',
+          cursor: onStartChallenge ? 'pointer' : 'default',
+          transition: 'border-color .2s',
+        }}
+        onMouseEnter={e => { if (onStartChallenge) e.currentTarget.style.borderColor = 'rgba(251,191,36,.5)' }}
+        onMouseLeave={e => { if (onStartChallenge) e.currentTarget.style.borderColor = 'rgba(251,191,36,.25)' }}
+      >
+        <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(251,191,36,.06)', pointerEvents: 'none' }} />
         <div style={{ width: 48, height: 48, borderRadius: 14, flexShrink: 0, background: 'rgba(251,191,36,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, border: '1px solid rgba(251,191,36,.3)' }}>
           {dailyChall.emoji}
         </div>
         <div style={{ flex: 1 }}>
           <span style={{ fontSize: 10, fontWeight: 800, color: '#fbbf24', fontFamily: "'Syne', sans-serif", letterSpacing: '.08em' }}>DAILY CHALLENGE</span>
           <p style={{ margin: '2px 0', fontSize: 14, fontWeight: 700, color: '#fde68a' }}>{dailyChall.label}</p>
-          <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>{dailyChall.desc}</p>
+          <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>{dailyDone ? '✅ Completed today!' : dailyChall.desc}</p>
         </div>
-        <div style={{ background: 'rgba(251,191,36,.15)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 10, padding: '6px 12px', flexShrink: 0, fontSize: 13, fontWeight: 800, color: '#fbbf24', fontFamily: "'Syne', sans-serif" }}>
-          +{dailyChall.xp} XP
+        <div style={{ background: dailyDone ? 'rgba(52,211,153,0.15)' : 'rgba(251,191,36,.15)', border: `1px solid ${dailyDone ? 'rgba(52,211,153,0.35)' : 'rgba(251,191,36,.3)'}`, borderRadius: 10, padding: '6px 12px', flexShrink: 0, fontSize: 13, fontWeight: 800, color: dailyDone ? '#6ee7b7' : '#fbbf24', fontFamily: "'Syne', sans-serif" }}>
+          {dailyDone ? 'Done' : `+${dailyChall.xp} XP`}
         </div>
       </div>
 
-      {/* ── Tabs — Progress + Badges only (Plans is its own screen) ── */}
+      {/* ── Tabs ── */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)', borderRadius: 14, padding: 4 }}>
         {[
           { id: 'progress', label: '📈 Progress' },
@@ -257,9 +406,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
             background: activeTab === tab.id
               ? 'linear-gradient(135deg, rgba(124,92,231,.4), rgba(168,85,247,.3))'
               : 'transparent',
-            border: activeTab === tab.id
-              ? '1px solid rgba(168,85,247,.4)'
-              : '1px solid transparent',
+            border: activeTab === tab.id ? '1px solid rgba(168,85,247,.4)' : '1px solid transparent',
             borderRadius: 10,
             color: activeTab === tab.id ? '#e0d8ff' : '#6b5f8a',
             fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all .2s',
@@ -271,16 +418,13 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
       {/* ══════════ PROGRESS TAB ══════════ */}
       {activeTab === 'progress' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
           <Section label={`This week · ${streak > 0 ? `🔥 ${streak} day streak` : 'No streak yet'}`}>
             <div style={{ display: 'flex', gap: 6 }}>
               {days.map((d, i) => (
                 <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                   <div style={{
                     width: '100%', aspectRatio: '1', borderRadius: 10,
-                    background: d.today
-                      ? 'linear-gradient(135deg, #7c5ce7, #a855f7)'
-                      : d.active ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
+                    background: d.today ? 'linear-gradient(135deg, #7c5ce7, #a855f7)' : d.active ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
                     border: `1.5px solid ${d.today ? '#a855f7' : d.active ? 'rgba(124,92,231,.4)' : 'rgba(255,255,255,.07)'}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
                     boxShadow: d.today ? '0 0 14px rgba(124,92,231,.5)' : 'none',
@@ -311,7 +455,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
                 {regions.map(r => {
                   const m   = REGION_META[r] || REGION_META.global
                   const cnt = byRegion[r]?.length || 0
-                  const pct = totalSongs ? Math.round((cnt / totalSongs) * 100) : 0
+                  const pct = badgeStats.totalSongs ? Math.round((cnt / badgeStats.totalSongs) * 100) : 0
                   return (
                     <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#c4b5f0', width: 110, flexShrink: 0 }}>{m.emoji} {m.label}</span>
@@ -330,7 +474,7 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
                 { label: 'Total XP',   value: xp,         icon: '⚡', color: '#a855f7' },
-                { label: 'Songs made', value: totalSongs, icon: '🎵', color: '#34d399' },
+                { label: 'Songs made', value: badgeStats.totalSongs, icon: '🎵', color: '#34d399' },
                 { label: 'Day streak', value: streak,     icon: '🔥', color: '#f59e0b' },
                 { label: 'Badges',     value: `${earnedBadges}/${BADGES.length}`, icon: '🏅', color: '#60a5fa' },
               ].map(stat => (
@@ -353,14 +497,14 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
           {BADGES.map(badge => (
             <BadgeCard
               key={badge.id} badge={badge}
-              xp={xp} streak={streak} totalSongs={totalSongs}
+              badgeStats={badgeStats}
               onTap={(b, earned) => setTooltip({ badge: b, earned })}
             />
           ))}
         </div>
       )}
 
-      {/* ── Badge tooltip modal ── */}
+      {/* ── Badge detail tooltip modal ── */}
       {tooltip && (
         <div
           onClick={() => setTooltip(null)}
@@ -377,17 +521,26 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
               {tooltip.badge.label}
             </p>
             <p style={{ margin: '0 0 20px', fontSize: 14, color: '#8b7eb8', lineHeight: 1.6 }}>
-              {tooltip.earned ? tooltip.badge.desc : tooltip.badge.how}
+              {tooltip.earned ? tooltip.badge.why : tooltip.badge.how}
             </p>
             {tooltip.earned
-              ? <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(168,85,247,.15)', border: '1px solid rgba(168,85,247,.4)', borderRadius: 20, padding: '8px 18px', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>✨ Badge earned!</div>
-              : <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 14, padding: '12px 16px', fontSize: 13, color: '#6b5f8a' }}>🔒 Keep going — you've got this!</div>
+              ? <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(168,85,247,.15)', border: '1px solid rgba(168,85,247,.4)', borderRadius: 20, padding: '8px 18px', fontSize: 13, fontWeight: 700, color: '#a855f7', marginBottom: 16 }}>✨ Badge earned!</div>
+              : <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 14, padding: '12px 16px', fontSize: 13, color: '#6b5f8a', marginBottom: 16 }}>🔒 Keep going — you've got this!</div>
             }
-            <button onClick={() => setTooltip(null)} style={{ display: 'block', width: '100%', marginTop: 16, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px', color: '#8b7eb8', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
+            <button onClick={() => setTooltip(null)} style={{ display: 'block', width: '100%', background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px', color: '#8b7eb8', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
               Close
             </button>
           </div>
         </div>
+      )}
+
+      {/* ── Badge earned popup — fires automatically ── */}
+      {currentBadge && (
+        <BadgeEarnedPopup
+          key={currentBadge.id}
+          badge={currentBadge}
+          onClose={() => setCurrentBadge(null)}
+        />
       )}
 
       <style>{CSS}</style>
@@ -395,7 +548,6 @@ export default function RewardsScreen({ xp = 0, userId = '' }) {
   )
 }
 
-// ── Small helpers ─────────────────────────────────────────────────────────────
 function Section({ label, children }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -408,8 +560,15 @@ function Section({ label, children }) {
 }
 
 const CSS = `
-  @keyframes rankFloat     { 0%, 100% { transform: translateY(0);     } 50% { transform: translateY(-6px); } }
+  @keyframes rankFloat     { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
   @keyframes particleBurst { 0% { transform: scale(1) translate(0,0); opacity: 1; } 100% { transform: scale(0) translate(var(--tx,20px), var(--ty,-30px)); opacity: 0; } }
   @keyframes modalPop      { from { transform: scale(.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   @keyframes badgeBounce   { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 70% { transform: scale(.95); } 100% { transform: scale(1); } }
+  @keyframes badgeGlow     { 0%, 100% { box-shadow: 0 0 32px rgba(168,85,247,0.5), inset 0 0 20px rgba(168,85,247,0.1); } 50% { box-shadow: 0 0 48px rgba(168,85,247,0.75), inset 0 0 28px rgba(168,85,247,0.2); } }
+  @keyframes badgeShimmer  { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+  @keyframes confettiFall  { 0% { transform: translateY(0) rotate(0deg); opacity: 1; } 100% { transform: translateY(180px) rotate(540deg); opacity: 0; } }
+  @media (max-width: 480px) {
+    .rh-root { max-width: 100% !important; padding-bottom: 32px !important; }
+    .rh-daily-challenge { flex-wrap: wrap !important; gap: 10px !important; padding: 14px !important; }
+  }
 `

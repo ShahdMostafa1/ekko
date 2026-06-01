@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { EKKO_TAGLINE, EKKO_HOOK } from '../utils/tagline'
 
 const PASSWORD_RULES = [
   { key: 'lower',   label: 'One lowercase letter (a–z)',   test: p => /[a-z]/.test(p) },
@@ -159,11 +160,11 @@ export default function AuthScreen({ onAuth }) {
   // ── Check your email screen ───────────────────────────────────────────
   if (awaitingConfirm) {
     return (
-      <div style={{
-        minHeight: '100vh', width: '100%',
+      <div className="auth-shell" style={{
+        width: '100%',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+        boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
       }}>
         <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
           <div style={{ fontSize: 52, lineHeight: 1 }}>✉️</div>
@@ -234,11 +235,11 @@ export default function AuthScreen({ onAuth }) {
   // ── Forgot password screen ────────────────────────────────────────────
   if (mode === 'forgotPassword') {
     return (
-      <div style={{
-        minHeight: '100vh', width: '100%',
+      <div className="auth-shell" style={{
+        width: '100%',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+        boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
       }}>
         <div style={{ width: '100%', maxWidth: 440 }}></div>
         <div className="auth-logo">EKKO</div>
@@ -334,17 +335,18 @@ export default function AuthScreen({ onAuth }) {
   const canSubmit = email && password && (mode === 'login' || (allPassed && fullName.trim().length > 0))
 
   return (
-    <div style={{
-      minHeight: '100vh', width: '100%',
+    <div className="auth-shell" style={{
+      width: '100%',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      padding: '24px 16px', boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
+      boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
     }}>
       <div className="auth-logo">EKKO</div>
+      <p className="auth-tagline">{EKKO_TAGLINE}</p>
       <h1 className="auth-headline">
-        <em>{mode === 'login' ? 'Welcome back' : 'Begin your journey'}</em>
+        <em>{mode === 'login' ? 'Welcome back' : 'Start creating'}</em>
       </h1>
-      <p className="auth-sub">Musical Mood Journeys</p>
+      <p className="auth-hook">{EKKO_HOOK}</p>
 
       <div className="auth-card">
         {/* Google */}

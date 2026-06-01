@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { applyHistoryLimit, canDownload } from '../utils/planUtils'
 
 const REGION_META = {
   arabic:      { emoji: '🌙', label: 'Arabic',      color: '#c9a84c' },
@@ -15,24 +16,48 @@ const EMOTION_EMOJI = {
   fear: '🌀', surprise: '⚡', disgust: '🌫️', neutral: '🌿',
 }
 
-export default function SongHistory({ userId = '' }) {
+export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade }) {
   const [songs, setSongs]       = useState([])
   const [byRegion, setByRegion] = useState({})
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all')
-  const [sortBy, setSortBy]     = useState('newest')   // 'newest' | 'oldest' | 'energy'
+  const [sortBy, setSortBy]     = useState('newest')
   const [search, setSearch]     = useState('')
   const [expanded, setExpanded] = useState(null)
   const [playing, setPlaying]   = useState(null)
-  const [playProgress, setPlayProgress] = useState({}) // id → 0..1
+  const [playProgress, setPlayProgress] = useState({})
+  const [editingId, setEditingId]     = useState(null)
+  const [editTitle, setEditTitle]     = useState('')
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionError, setActionError]     = useState('')
   const audioRef                = useRef(null)
   const rafRef                  = useRef(null)
 
+  const API = import.meta.env.VITE_API_URL
+
+  const normalizeSong = (song) => ({
+    ...song,
+    is_favorite: song.is_favorite === true || song.is_favorite === 'true',
+  })
+
+  const reloadSongs = () => {
+    if (!userId) return Promise.resolve()
+    return fetch(`${API}/music/history/${userId}`)
+      .then(r => r.json())
+      .then(data => {
+        const list = (data.songs || []).map(normalizeSong)
+        const grouped = {}
+        Object.entries(data.by_region || {}).forEach(([region, items]) => {
+          grouped[region] = items.map(normalizeSong)
+        })
+        setSongs(list)
+        setByRegion(grouped)
+      })
+  }
+
   useEffect(() => {
     if (!userId) { setLoading(false); return }
-    fetch(`${import.meta.env.VITE_API_URL}/music/history/${userId}`)
-      .then(r => r.json())
-      .then(data => { setSongs(data.songs || []); setByRegion(data.by_region || {}) })
+    reloadSongs()
       .catch(e => console.error('History load failed:', e))
       .finally(() => setLoading(false))
   }, [userId])
@@ -72,8 +97,110 @@ export default function SongHistory({ userId = '' }) {
     trackProgress(song.id)
   }
 
+  const patchSong = async (songId, body) => {
+    const res = await fetch(`${API}/music/${songId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, ...body }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
+  const toggleFavorite = async (song, e) => {
+    e?.stopPropagation()
+    if (!userId) {
+      setActionError('Sign in to save favourites.')
+      return
+    }
+    if (actionLoading) return
+    setActionLoading(song.id)
+    setActionError('')
+    const next = !song.is_favorite
+    try {
+      await patchSong(song.id, { is_favorite: next })
+      setSongs(prev => prev.map(s => s.id === song.id ? { ...s, is_favorite: next } : s))
+      setByRegion(prev => {
+        const updated = { ...prev }
+        Object.keys(updated).forEach(r => {
+          updated[r] = updated[r].map(s => s.id === song.id ? { ...s, is_favorite: next } : s)
+        })
+        return updated
+      })
+    } catch (err) {
+      console.error('Favorite toggle failed:', err)
+      setActionError('Could not update favourite. Restart the backend and try again.')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const deleteSong = async (song, e) => {
+    e?.stopPropagation()
+    if (!userId || actionLoading) return
+    if (!window.confirm(`Delete "${song.title || song.mood_label || 'this song'}"?`)) return
+    setActionLoading(song.id)
+    try {
+      const res = await fetch(`${API}/music/${song.id}?user_id=${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (playing === song.id) {
+        audioRef.current?.pause()
+        setPlaying(null)
+      }
+      setSongs(prev => prev.filter(s => s.id !== song.id))
+      setByRegion(prev => {
+        const updated = { ...prev }
+        Object.keys(updated).forEach(r => {
+          updated[r] = updated[r].filter(s => s.id !== song.id)
+        })
+        return updated
+      })
+      if (expanded === song.id) setExpanded(null)
+    } catch (err) {
+      console.error('Delete failed:', err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const startEditTitle = (song, e) => {
+    e?.stopPropagation()
+    setEditingId(song.id)
+    setEditTitle(song.title || song.mood_label || '')
+  }
+
+  const saveTitle = async (songId) => {
+    if (!userId || !editTitle.trim()) { setEditingId(null); return }
+    setActionLoading(songId)
+    try {
+      await patchSong(songId, { title: editTitle.trim() })
+      const title = editTitle.trim()
+      setSongs(prev => prev.map(s => s.id === songId ? { ...s, title } : s))
+      setByRegion(prev => {
+        const updated = { ...prev }
+        Object.keys(updated).forEach(r => {
+          updated[r] = updated[r].map(s => s.id === songId ? { ...s, title } : s)
+        })
+        return updated
+      })
+      setEditingId(null)
+    } catch (err) {
+      console.error('Title update failed:', err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   // ── Filter + sort + search ─────────────────────────────────
-  const base = filter === 'all' ? songs : (byRegion[filter] || [])
+  const { visible: planVisible, truncated, hidden } = applyHistoryLimit(songs, userPlan)
+  const favCount = planVisible.filter(s => s.is_favorite).length
+  const base = filter === 'all'
+    ? planVisible
+    : filter === 'favorites'
+    ? planVisible.filter(s => s.is_favorite)
+    : (byRegion[filter] || []).filter(s => planVisible.some(v => v.id === s.id))
   const searched = search.trim()
     ? base.filter(s => {
         const q = search.toLowerCase()
@@ -98,6 +225,7 @@ export default function SongHistory({ userId = '' }) {
     const meta    = REGION_META[song.region] || REGION_META.global
     const isOpen  = expanded === song.id
     const isPlay  = playing  === song.id
+    const isBusy  = actionLoading === song.id
     const prog    = playProgress[song.id] || 0
     const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric',
@@ -105,12 +233,26 @@ export default function SongHistory({ userId = '' }) {
     const displayName = song.title || song.mood_label || song.emotion
 
     return (
-      <div className="sh-card" style={{ '--rc': meta.color }}>
+      <div className={`sh-card ${song.is_favorite ? 'fav' : ''}`} style={{ '--rc': meta.color }}>
         <div className="sh-card-top" onClick={() => setExpanded(isOpen ? null : song.id)}>
           <div className="sh-left">
             <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
             <div className="sh-info">
-              <p className="sh-mood">{displayName}</p>
+              {editingId === song.id ? (
+                <div className="sh-edit-row" onClick={e => e.stopPropagation()}>
+                  <input
+                    className="sh-edit-input"
+                    value={editTitle}
+                    onChange={e => setEditTitle(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveTitle(song.id); if (e.key === 'Escape') setEditingId(null) }}
+                    autoFocus
+                  />
+                  <button className="sh-action-btn save" onClick={() => saveTitle(song.id)}>✓</button>
+                  <button className="sh-action-btn" onClick={() => setEditingId(null)}>✕</button>
+                </div>
+              ) : (
+                <p className="sh-mood">{displayName}</p>
+              )}
               <p className="sh-meta">
                 <span className="sh-region">{meta.emoji} {meta.label}</span>
                 <span className="sh-dot">·</span>
@@ -125,15 +267,53 @@ export default function SongHistory({ userId = '' }) {
             </div>
           </div>
           <div className="sh-right">
+            <button
+              className={`sh-action-btn sh-fav-btn ${song.is_favorite ? 'on' : ''}`}
+              onClick={e => toggleFavorite(song, e)}
+              disabled={isBusy}
+              title={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
+              aria-label={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
+              aria-pressed={song.is_favorite}
+            >
+              {song.is_favorite ? '❤️' : '🤍'}
+            </button>
             {song.audio_url && (
-              <button
-                className={`sh-play ${isPlay ? 'playing' : ''}`}
-                onClick={e => { e.stopPropagation(); togglePlay(song) }}
-                aria-label={isPlay ? 'Pause' : 'Play'}
-              >
-                {isPlay ? '⏸' : '▶'}
-              </button>
+              <>
+                {canDownload(userPlan) ? (
+                  <a
+                    className="sh-action-btn sh-dl-btn"
+                    href={song.audio_url}
+                    download
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title="Download"
+                    aria-label="Download song"
+                  >
+                    ⬇
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="sh-action-btn sh-dl-btn locked"
+                    onClick={e => { e.stopPropagation(); onUpgrade?.() }}
+                    title="Download — Groove or Studio"
+                    aria-label="Download locked — upgrade to unlock"
+                  >
+                    🔒
+                  </button>
+                )}
+                <button
+                  className={`sh-play ${isPlay ? 'playing' : ''}`}
+                  onClick={e => { e.stopPropagation(); togglePlay(song) }}
+                  aria-label={isPlay ? 'Pause' : 'Play'}
+                >
+                  {isPlay ? '⏸' : '▶'}
+                </button>
+              </>
             )}
+            <button className="sh-action-btn" onClick={e => startEditTitle(song, e)} title="Rename">✎</button>
+            <button className="sh-action-btn danger" onClick={e => deleteSong(song, e)} disabled={isBusy} title="Delete">🗑</button>
             <span className="sh-chevron">{isOpen ? '▲' : '▼'}</span>
           </div>
         </div>
@@ -173,6 +353,30 @@ export default function SongHistory({ userId = '' }) {
 
             {song.reasoning  && <p className="sh-reasoning">💭 {song.reasoning}</p>}
             {song.artist_label && <p className="sh-artist">🎤 {song.artist_label} style</p>}
+            {song.audio_url && (
+              <div className="sh-dl-row">
+                {canDownload(userPlan) ? (
+                  <a
+                    className="sh-dl-link"
+                    href={song.audio_url}
+                    download
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    ⬇ Download track
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="sh-dl-link locked"
+                    onClick={e => { e.stopPropagation(); onUpgrade?.() }}
+                  >
+                    🔒 Download — upgrade to Groove or Studio
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -183,12 +387,31 @@ export default function SongHistory({ userId = '' }) {
     <div className="sh-root">
       <div className="sh-header">
         <h2 className="sh-headline">Your <em>songs</em></h2>
-        <p className="sh-sub">
-          {loading ? 'Loading…' : `${songs.length} track${songs.length !== 1 ? 's' : ''} created`}
-        </p>
+        <div className="sh-sub-row">
+          <p className="sh-sub">
+            {loading ? 'Loading…' : truncated
+              ? `${planVisible.length} of ${songs.length} tracks (Free plan)`
+              : `${songs.length} track${songs.length !== 1 ? 's' : ''} created`}
+          </p>
+          <button
+            type="button"
+            className={`sh-fav-filter ${filter === 'favorites' ? 'active' : ''}`}
+            onClick={() => setFilter(f => f === 'favorites' ? 'all' : 'favorites')}
+            aria-pressed={filter === 'favorites'}
+          >
+            <span className="sh-fav-filter-icon">{filter === 'favorites' ? '❤️' : '🤍'}</span>
+            Favourites{favCount > 0 ? ` (${favCount})` : ''}
+          </button>
+        </div>
       </div>
 
-      {/* ── Search bar ── */}
+      {truncated && (
+        <div className="sh-plan-banner">
+          Showing your {planVisible.length} most recent tracks. {hidden} older track{hidden !== 1 ? 's' : ''} hidden on Free.{' '}
+          <button type="button" className="sh-upgrade-link" onClick={() => onUpgrade?.()}>Upgrade for full history</button>
+        </div>
+      )}
+
       <div className="sh-search-row">
         <div className="sh-search-wrap">
           <span className="sh-search-icon">🔍</span>
@@ -214,13 +437,16 @@ export default function SongHistory({ userId = '' }) {
         </select>
       </div>
 
+      {actionError && (
+        <p className="sh-action-error" role="alert">{actionError}</p>
+      )}
+
       {/* ── Region filter pills ── */}
-      {regions.length > 1 && (
-        <div className="sh-filters">
-          <button className={`sh-pill ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
-            All ({songs.length})
-          </button>
-          {regions.map(r => {
+      <div className="sh-filters">
+        <button className={`sh-pill ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+          All ({songs.length})
+        </button>
+        {regions.length > 1 && regions.map(r => {
             const m = REGION_META[r] || REGION_META.global
             return (
               <button
@@ -233,17 +459,22 @@ export default function SongHistory({ userId = '' }) {
               </button>
             )
           })}
-        </div>
-      )}
+      </div>
 
       {loading ? (
         <div className="sh-loading"><div className="sh-spinner" /><p>Loading your songs…</p></div>
       ) : filteredSongs.length === 0 ? (
         <div className="sh-empty">
           <p className="sh-empty-icon">{search ? '🔍' : '🎵'}</p>
-          <p className="sh-empty-title">{search ? 'No results found' : 'No songs yet'}</p>
+          <p className="sh-empty-title">
+            {search ? 'No results found' : filter === 'favorites' ? 'No favourites yet' : 'No songs yet'}
+          </p>
           <p className="sh-empty-sub">
-            {search ? `No songs match "${search}"` : 'Share a mood to create your first track.'}
+            {search
+              ? `No songs match "${search}"`
+              : filter === 'favorites'
+              ? 'Tap 🤍 on any song to add it to your favourites.'
+              : 'Share a mood to create your first track.'}
           </p>
         </div>
       ) : (
@@ -257,17 +488,55 @@ export default function SongHistory({ userId = '' }) {
           font-family: 'DM Sans','Segoe UI',sans-serif;
           max-width: 480px; margin: 0 auto; padding-bottom: 40px;
         }
-        .sh-header { text-align: center; margin-bottom: 20px; }
-        .sh-headline { font-size: 24px; font-weight: 700; color: #fff; margin: 0 0 4px; }
+        .sh-header { margin-bottom: 14px; }
+        .sh-plan-banner {
+          margin-bottom: 12px; padding: 10px 14px; border-radius: 10px;
+          background: rgba(124, 92, 231, 0.12); border: 1px solid rgba(124, 92, 231, 0.25);
+          font-size: 13px; color: rgba(255,255,255,0.75); line-height: 1.45;
+        }
+        .sh-upgrade-link {
+          background: none; border: none; padding: 0; color: #a78bfa;
+          font-weight: 600; cursor: pointer; text-decoration: underline;
+        }
+        .sh-headline { font-size: 24px; font-weight: 700; color: #fff; margin: 0 0 6px; text-align: center; }
         .sh-headline em { font-style: italic; color: #b09ee0; }
+        .sh-sub-row {
+          display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        }
         .sh-sub { font-size: 13px; color: #8b7eb8; margin: 0; }
+
+        /* ── Favourites (same width as sort) ── */
+        .sh-fav-filter {
+          display: flex; align-items: center; justify-content: center; gap: 5px;
+          flex-shrink: 0; width: 128px; box-sizing: border-box;
+          padding: 9px 8px;
+          border-radius: 12px;
+          border: 1.5px solid rgba(176,158,224,.15);
+          background: rgba(255,255,255,.06);
+          color: #b09ee0; font-size: 12px; font-weight: 600;
+          cursor: pointer; font-family: inherit;
+          white-space: nowrap;
+          transition: border-color .18s, background .18s, color .18s, box-shadow .18s;
+        }
+        .sh-fav-filter:hover {
+          background: rgba(255,255,255,.09);
+          border-color: rgba(239,68,68,.35);
+          color: #e0d8ff;
+        }
+        .sh-fav-filter.active {
+          border-color: rgba(239,68,68,.55);
+          background: rgba(239,68,68,.12);
+          color: #fecaca;
+          box-shadow: 0 0 16px rgba(239,68,68,.15);
+        }
+        .sh-fav-filter-icon { font-size: 13px; line-height: 1; flex-shrink: 0; }
 
         /* ── Search + sort row ── */
         .sh-search-row {
           display: flex; gap: 8px; margin-bottom: 14px; align-items: center;
         }
         .sh-search-wrap {
-          flex: 1; position: relative; display: flex; align-items: center;
+          flex: 1; position: relative; display: flex; align-items: center; min-width: 0;
         }
         .sh-search-icon {
           position: absolute; left: 12px; font-size: 14px; pointer-events: none; opacity: .6;
@@ -289,6 +558,7 @@ export default function SongHistory({ userId = '' }) {
           color: #6b5f8a; font-size: 13px; cursor: pointer; padding: 2px 4px;
         }
         .sh-sort {
+          flex-shrink: 0; width: 128px; box-sizing: border-box;
           padding: 9px 10px;
           background: rgba(255,255,255,.06);
           border: 1.5px solid rgba(176,158,224,.15);
@@ -329,7 +599,54 @@ export default function SongHistory({ userId = '' }) {
           justify-content: space-between;
           padding: 14px 16px; cursor: pointer;
         }
-        .sh-left  { display: flex; align-items: center; gap: 12px; }
+        .sh-card.fav { border-color: rgba(239,68,68,.35); box-shadow: 0 4px 20px rgba(239,68,68,.12); }
+        .sh-action-error {
+          margin: 0 0 12px; padding: 10px 12px; border-radius: 10px;
+          background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.25);
+          color: #fca5a5; font-size: 12px; text-align: center;
+        }
+        .sh-fav-btn {
+          font-size: 16px; line-height: 1;
+        }
+        .sh-fav-btn.on {
+          border-color: rgba(239,68,68,.55);
+          background: rgba(239,68,68,.15);
+          box-shadow: 0 0 14px rgba(239,68,68,.3);
+        }
+        .sh-fav-btn:hover:not(:disabled) {
+          border-color: rgba(239,68,68,.45);
+          background: rgba(239,68,68,.1);
+        }
+        .sh-action-btn {
+          background: rgba(255,255,255,.06); border: 1px solid rgba(176,158,224,.15);
+          border-radius: 8px; color: #8b7eb8; font-size: 12px;
+          width: 28px; height: 28px; cursor: pointer; display: flex;
+          align-items: center; justify-content: center; transition: all .15s;
+        }
+        .sh-action-btn:hover { background: rgba(255,255,255,.1); color: #e0d8ff; }
+        .sh-action-btn.save { color: #34d399; border-color: rgba(52,211,153,.3); }
+        .sh-action-btn.danger:hover { color: #f87171; border-color: rgba(248,113,113,.3); }
+        .sh-dl-btn { font-size: 13px; text-decoration: none; color: inherit; }
+        .sh-dl-btn.locked { opacity: 0.7; cursor: pointer; }
+        .sh-dl-row { margin-top: 4px; }
+        .sh-dl-link {
+          display: inline-flex; align-items: center; gap: 6px;
+          font-size: 12px; font-weight: 600; color: #a78bfa; text-decoration: none;
+          background: rgba(124, 92, 231, 0.12); border: 1px solid rgba(124, 92, 231, 0.25);
+          border-radius: 8px; padding: 6px 12px; cursor: pointer;
+        }
+        .sh-dl-link.locked {
+          background: none; border: none; padding: 0;
+          color: #8b7eb8; font-weight: 500;
+        }
+        .sh-dl-link:not(.locked):hover { background: rgba(124, 92, 231, 0.22); }
+        .sh-edit-row { display: flex; gap: 6px; align-items: center; margin-bottom: 3px; }
+        .sh-edit-input {
+          flex: 1; min-width: 0; padding: 4px 8px; border-radius: 8px;
+          background: rgba(255,255,255,.08); border: 1px solid rgba(124,92,231,.4);
+          color: #e0d8ff; font-size: 13px; font-family: inherit; outline: none;
+        }
+        .sh-left  { display: flex; align-items: center; gap: 8px; }
         .sh-emotion { font-size: 26px; line-height: 1; }
         .sh-mood { font-size: 14px; font-weight: 700; color: #e0d8ff; margin: 0 0 3px; }
         .sh-meta {
@@ -416,6 +733,21 @@ export default function SongHistory({ userId = '' }) {
         .sh-empty-icon  { font-size: 44px; margin: 0 0 14px; }
         .sh-empty-title { font-size: 17px; font-weight: 600; color: #c4b5f0; margin: 0 0 6px; }
         .sh-empty-sub   { font-size: 13px; color: #8b7eb8; margin: 0; }
+
+        @media (max-width: 520px) {
+          .sh-root { max-width: 100%; }
+          .sh-headline { font-size: 20px; }
+          .sh-sub-row { flex-wrap: wrap; gap: 10px; }
+          .sh-fav-filter { width: auto; flex: 1; min-width: 0; }
+          .sh-search-row { flex-wrap: wrap; }
+          .sh-search-wrap { flex: 1 1 100%; width: 100%; }
+          .sh-sort { width: 100%; }
+          .sh-card-top { flex-wrap: wrap; gap: 10px; }
+          .sh-right { margin-left: auto; }
+        }
+        @media (max-width: 380px) {
+          .sh-fav-filter span:last-child { display: none; }
+        }
       `}</style>
     </div>
   )

@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+from middleware.studio_api import StudioApiMiddleware
+
 load_dotenv()
 
 app = FastAPI(
@@ -32,17 +34,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(StudioApiMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────
 from routers.mood          import router as mood_router
 from routers.music         import router as music_router
 from routers.rewards       import router as rewards_router
 from routers.stripe_router import router as stripe_router
+from routers.api_v1        import router as api_v1_router
+from routers.admin         import router as admin_router
+from routers.survey        import router as survey_router
 
 app.include_router(mood_router)
 app.include_router(music_router)
 app.include_router(rewards_router)
 app.include_router(stripe_router)
+app.include_router(api_v1_router)
+app.include_router(admin_router)
+app.include_router(survey_router)
 
 
 # ── Keep-alive ────────────────────────────────────────────────

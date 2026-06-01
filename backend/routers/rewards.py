@@ -8,7 +8,7 @@ POST /rewards/xp            → award XP for a specific action (idempotent per s
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -16,6 +16,15 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/rewards", tags=["Layer 5 — Reward & History"])
 
 _local_rewards: dict[str, dict] = {}
+
+DAILY_CHALLENGES = {
+    "dc1": {"emoji": "🌅", "label": "Morning Mood",  "desc": "Share a mood before noon",  "xp": 15},
+    "dc2": {"emoji": "🎭", "label": "Emotion Flip",  "desc": "Try a new region today",    "xp": 20},
+    "dc3": {"emoji": "🌙", "label": "Night Session", "desc": "Create a song after 9 PM",  "xp": 25},
+    "dc4": {"emoji": "🎲", "label": "Random Vibes",  "desc": "Use the quiz mood input",   "xp": 15},
+    "dc5": {"emoji": "🔁", "label": "Double Down",   "desc": "Generate 2 songs today",    "xp": 30},
+}
+DAILY_CHALLENGE_IDS = ["dc1", "dc2", "dc3", "dc4", "dc5"]
 
 # Tracks which (user_id, session_key) pairs have already been awarded XP
 # so the same action can't be repeated within a server session.
@@ -68,7 +77,95 @@ class XpRequest(BaseModel):
     session_key: str   # unique per action occurrence, e.g. "mood_shared:{song_id}" or "music_cocreated:{session_id}"
 
 
+class DailyChallengeClaimRequest(BaseModel):
+    user_id: str
+    trigger: str = ""   # mood_shared | quiz_used | region_changed | song_saved
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _today_challenge_id() -> str:
+    day_of_year = date.today().timetuple().tm_yday
+    return DAILY_CHALLENGE_IDS[day_of_year % len(DAILY_CHALLENGE_IDS)]
+
+
+def _daily_challenge_session_key(challenge_id: str | None = None) -> str:
+    cid = challenge_id or _today_challenge_id()
+    return f"daily_challenge:{date.today()}:{cid}"
+
+
+def _today_start_iso() -> str:
+    return datetime.combine(date.today(), datetime.min.time()).isoformat()
+
+
+def _count_today_activity(sb, user_id: str) -> int:
+    if not sb:
+        return 0
+    start = _today_start_iso()
+    try:
+        songs = (
+            sb.table("songs")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", start)
+            .execute()
+        )
+        if songs.count:
+            return songs.count
+    except Exception:
+        pass
+    try:
+        sessions = (
+            sb.table("mood_sessions")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", start)
+            .execute()
+        )
+        return sessions.count or 0
+    except Exception:
+        return 0
+
+
+def _challenge_met(sb, user_id: str, challenge_id: str, trigger: str) -> bool:
+    hour = datetime.now().hour
+
+    if challenge_id == "dc1":
+        return hour < 12 and trigger in ("mood_shared", "quiz_used", "")
+
+    if challenge_id == "dc2":
+        if trigger == "region_changed":
+            return True
+        if not sb:
+            return False
+        try:
+            profile = sb.table("profiles").select("region").eq("id", user_id).single().execute()
+            home_region = (profile.data or {}).get("region") or "global"
+            sessions = (
+                sb.table("mood_sessions")
+                .select("region")
+                .eq("user_id", user_id)
+                .gte("created_at", _today_start_iso())
+                .execute()
+            )
+            for row in sessions.data or []:
+                reg = row.get("region") or "global"
+                if reg != home_region:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if challenge_id == "dc3":
+        return hour >= 21 and trigger in ("song_saved", "music_cocreated", "")
+
+    if challenge_id == "dc4":
+        return trigger == "quiz_used"
+
+    if challenge_id == "dc5":
+        return _count_today_activity(sb, user_id) >= 2
+
+    return False
 
 def _was_awarded(user_id: str, session_key: str, sb) -> bool:
     """Return True if this (user_id, session_key) was already awarded XP."""
@@ -241,6 +338,66 @@ async def award_xp(req: XpRequest):
         "xp_awarded": xp_amount,
         "total_xp":   total_xp,
         "action":     req.action,
+    }
+
+
+@router.get("/daily-challenge/{user_id}", summary="Today's daily challenge status")
+async def get_daily_challenge(user_id: str):
+    sb = _get_supabase()
+    cid = _today_challenge_id()
+    info = DAILY_CHALLENGES[cid]
+    session_key = _daily_challenge_session_key(cid)
+    completed = _was_awarded(user_id, session_key, sb)
+    return {
+        "id": cid,
+        "date": str(date.today()),
+        "completed": completed,
+        **info,
+    }
+
+
+@router.post("/daily-challenge/claim", summary="Claim today's daily challenge XP")
+async def claim_daily_challenge(req: DailyChallengeClaimRequest):
+    sb = _get_supabase()
+    cid = _today_challenge_id()
+    session_key = _daily_challenge_session_key(cid)
+
+    if _was_awarded(req.user_id, session_key, sb):
+        total = 0
+        if sb:
+            profile = sb.table("profiles").select("xp").eq("id", req.user_id).execute()
+            total = profile.data[0]["xp"] if profile.data else 0
+        return {
+            "awarded": False,
+            "reason": "already_completed",
+            "challenge_id": cid,
+            "total_xp": total,
+        }
+
+    if not _challenge_met(sb, req.user_id, cid, req.trigger):
+        return {
+            "awarded": False,
+            "reason": "conditions_not_met",
+            "challenge_id": cid,
+            "challenge": DAILY_CHALLENGES[cid],
+        }
+
+    xp_amount = DAILY_CHALLENGES[cid]["xp"]
+    _mark_awarded(req.user_id, session_key, "daily_challenge", xp_amount, sb)
+    _add_xp_to_profile(req.user_id, xp_amount, sb)
+
+    if sb:
+        profile = sb.table("profiles").select("xp").eq("id", req.user_id).execute()
+        total_xp = profile.data[0]["xp"] if profile.data else xp_amount
+    else:
+        total_xp = xp_amount
+
+    return {
+        "awarded": True,
+        "xp_awarded": xp_amount,
+        "total_xp": total_xp,
+        "challenge_id": cid,
+        "label": DAILY_CHALLENGES[cid]["label"],
     }
 
 

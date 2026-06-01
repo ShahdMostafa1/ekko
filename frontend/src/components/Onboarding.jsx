@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { isRegionUnlocked } from '../utils/planUtils'
 
 const REGIONS = [
   { id: 'arabic',      emoji: '🌙', label: 'Arabic',      desc: 'Maqam scales, oud, qanun',        color: '#c4954f', glow: 'rgba(196,149,79,0.35)'  },
@@ -13,7 +14,7 @@ const REGIONS = [
 // Floating music notes for visual atmosphere
 const NOTES = ['♪', '♫', '♩', '♬', '𝄞', '♭', '♮']
 
-export default function Onboarding({ onComplete }) {
+export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade }) {
   const [mounted, setMounted]       = useState(false)
   const [hovered, setHovered]       = useState(null)
   const [selected, setSelected]     = useState(null)
@@ -37,6 +38,10 @@ export default function Onboarding({ onComplete }) {
   }, [])
 
   const handleSelect = (region) => {
+    if (!isRegionUnlocked(region.id, userPlan)) {
+      onUpgrade?.()
+      return
+    }
     setSelected(region.id)
     setTimeout(() => onComplete(region), 320)
   }
@@ -72,16 +77,11 @@ export default function Onboarding({ onComplete }) {
           transition: 'opacity .55s ease, transform .55s ease',
         }}
       >
-        <div className="ob-logo-wrap">
-          <span className="ob-logo-icon">🎵</span>
-          <span className="ob-logo-text">Ekko</span>
-        </div>
         <h1 className="ob-headline">
-          Musical Mood <em>Journeys</em>
+          Where should your <em>sound</em> begin?
         </h1>
         <p className="ob-sub">
-          Where are your musical roots?<br />
-          <span className="ob-sub-accent">We'll shape your sound around your culture.</span>
+          <span className="ob-sub-accent">Choose a region — every song follows your mood and culture.</span>
         </p>
       </div>
 
@@ -90,16 +90,17 @@ export default function Onboarding({ onComplete }) {
         {REGIONS.map((r, i) => {
           const isHov = hovered === r.id
           const isSel = selected === r.id
+          const locked = !isRegionUnlocked(r.id, userPlan)
           return (
             <button
               key={r.id}
-              className={`ob-region ${isSel ? 'ob-region--selected' : ''}`}
+              className={`ob-region ${isSel ? 'ob-region--selected' : ''} ${locked ? 'ob-region--locked' : ''}`}
               style={{
                 '--rc':       r.color,
                 '--rg':       r.glow,
-                opacity:      mounted ? 1 : 0,
+                opacity:      mounted ? (locked ? 0.48 : 1) : 0,
                 transform:    mounted
-                  ? (isSel ? 'scale(0.97)' : isHov ? 'translateX(5px)' : 'translateX(0)')
+                  ? (isSel ? 'scale(0.97)' : !locked && isHov ? 'translateX(5px)' : 'translateX(0)')
                   : 'translateX(-22px)',
                 transition: isSel
                   ? 'transform .18s ease, opacity .1s'
@@ -112,7 +113,7 @@ export default function Onboarding({ onComplete }) {
               {/* Glow layer */}
               <span
                 className="ob-region-glow"
-                style={{ opacity: isHov || isSel ? 1 : 0 }}
+                style={{ opacity: !locked && (isHov || isSel) ? 1 : 0 }}
               />
 
               {/* Emoji */}
@@ -128,8 +129,12 @@ export default function Onboarding({ onComplete }) {
 
               {/* Info */}
               <div className="ob-info">
-                <span className="ob-region-label">{r.label}</span>
-                <span className="ob-region-desc">{r.desc}</span>
+                <span className="ob-region-label">
+                  {r.label}{locked ? ' 🔒' : ''}
+                </span>
+                <span className="ob-region-desc">
+                  {locked ? 'Upgrade to Groove to unlock' : r.desc}
+                </span>
               </div>
 
               {/* Arrow */}
@@ -170,8 +175,9 @@ export default function Onboarding({ onComplete }) {
       <style>{`
         .ob-root {
           position: relative;
-          width: 340px;
-          max-width: 100%;
+          width: 100%;
+          max-width: 340px;
+          margin: 0 auto;
           font-family: 'DM Sans', 'Segoe UI', sans-serif;
           overflow: hidden;
         }
@@ -268,9 +274,45 @@ export default function Onboarding({ onComplete }) {
           transition: border-color .22s ease, background .22s ease;
           width: 100%;
         }
+        .ob-region::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, var(--rg, rgba(124,92,231,0.25)) 0%, transparent 55%);
+          transform: translateX(-102%);
+          transition: transform .35s ease;
+          pointer-events: none;
+          border-radius: inherit;
+        }
+        .ob-region:hover::before {
+          transform: translateX(0);
+        }
         .ob-region:hover {
           background: rgba(255, 255, 255, 0.06);
           border-color: rgba(var(--rc), 0.4);
+        }
+        .ob-region--locked {
+          cursor: pointer;
+          filter: saturate(0.55) brightness(0.72);
+          background: rgba(255, 255, 255, 0.015);
+          border-color: rgba(255, 255, 255, 0.04);
+        }
+        .ob-region--locked:hover {
+          filter: saturate(0.65) brightness(0.78);
+          border-color: rgba(245, 158, 11, 0.35);
+          background: rgba(255, 255, 255, 0.025);
+        }
+        .ob-region--locked:hover::before {
+          transform: translateX(-102%);
+        }
+        .ob-region--locked .ob-region-label {
+          color: rgba(224, 216, 255, 0.55);
+        }
+        .ob-region--locked .ob-region-desc {
+          color: rgba(107, 95, 138, 0.7);
+        }
+        .ob-region--locked .ob-emoji {
+          filter: grayscale(0.35);
         }
         .ob-region--selected {
           border-color: var(--rc) !important;

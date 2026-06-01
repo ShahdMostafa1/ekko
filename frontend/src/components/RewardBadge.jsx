@@ -32,7 +32,7 @@ export default function RewardBadge({ label, sub }) {
     <>
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&display=swap" rel="stylesheet" />
       <div style={{
-        position: 'fixed', bottom: 28, left: '50%',
+        position: 'fixed', bottom: 'max(28px, env(safe-area-inset-bottom))', left: '50%',
         transform: `translateX(-50%) translateY(${visible && !exiting ? '0' : '90px'})`,
         opacity: visible && !exiting ? 1 : 0,
         transition: 'transform .4s cubic-bezier(.34,1.56,.64,1), opacity .35s ease',

@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { labelFor } from '../utils/surveyQuestions'
 
 // ── Admin credentials (change these) ─────────────────────────────────────────
 const ADMIN_EMAIL    = 'admin@ekko.app'
 const ADMIN_PASSWORD = 'EkkoAdmin2026!'
+const API            = import.meta.env.VITE_API_URL
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const REGION_COLORS = {
@@ -39,6 +41,34 @@ function fmtTime(iso) {
   const d = new Date(iso)
   return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) + ' ' +
          d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })
+}
+
+function avgField(rows, key) {
+  const vals = rows.map(r => r[key]).filter(v => typeof v === 'number' && v >= 1)
+  if (!vals.length) return '—'
+  return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2)
+}
+
+function exportSurveysCsv(rows) {
+  if (!rows.length) return
+  const cols = [
+    'email', 'phase', 'age_group', 'music_frequency', 'ai_familiarity', 'used_mood_apps',
+    'primary_goal', 'cultural_importance', 'expected_mood_match', 'expected_quality', 'genre_preferences', 'loved_artists',
+    'experience_rating', 'ease_of_use', 'mood_accuracy', 'music_quality', 'cultural_fit',
+    'lyrics_quality', 'cocreation_rating', 'expectations_met', 'recommend_score', 'would_use_again',
+    'strongest_aspect', 'weakest_aspect', 'improvements_needed', 'created_at',
+  ]
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const lines = [
+    cols.join(','),
+    ...rows.map(r => cols.map(c => esc(c === 'email' ? (r.email || '') : r[c])).join(',')),
+  ]
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `ekko-surveys-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -144,6 +174,10 @@ export default function AdminDashboard({ onExit }) {
   const [moods, setMoods]       = useState([])
   const [rewards, setRewards]   = useState([])
   const [xpEvents, setXpEvents] = useState([])
+  const [surveys, setSurveys]   = useState([])
+  const [surveyPhaseFilter, setSurveyPhaseFilter] = useState('all')
+  const [editingSongId, setEditingSongId] = useState(null)
+  const [editSongTitle, setEditSongTitle] = useState('')
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -163,6 +197,15 @@ export default function AdminDashboard({ onExit }) {
       setMoods(m || [])
       setRewards(r || [])
       setXpEvents(x || [])
+      try {
+        const sr = await fetch(`${API}/admin/surveys`, {
+          headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
+        })
+        if (sr.ok) {
+          const sd = await sr.json()
+          setSurveys(sd.surveys || [])
+        }
+      } catch { /* surveys optional until migration */ }
       setRefresh(new Date())
     } catch (e) {
       console.error('Admin load error:', e)
@@ -197,6 +240,118 @@ export default function AdminDashboard({ onExit }) {
     (u.email || '').toLowerCase().includes(search.toLowerCase())
   )
 
+  const q = search.trim().toLowerCase()
+  const filteredSongs = songs.filter(s => !q || [
+    emailOf[s.user_id], s.title, s.mood_label, s.emotion, s.region, s.language, s.artist_label,
+  ].some(v => (v || '').toLowerCase().includes(q)))
+
+  const filteredMoods = moods.filter(m => !q || [
+    emailOf[m.user_id], m.emotion, m.transcript, m.region, m.language,
+  ].some(v => (v || '').toLowerCase().includes(q)))
+
+  const filteredRewards = rewards.filter(r => !q || (emailOf[r.user_id] || '').toLowerCase().includes(q))
+
+  const filteredXpEvents = xpEvents.filter(e => !q || (
+    (emailOf[e.user_id] || '').toLowerCase().includes(q) ||
+    (e.action || '').toLowerCase().includes(q)
+  ))
+
+  const deleteSongAdmin = async (id) => {
+    if (!window.confirm('Delete this song permanently?')) return
+    const { error } = await supabase.from('songs').delete().eq('id', id)
+    if (!error) setSongs(prev => prev.filter(s => s.id !== id))
+  }
+
+  const deleteMoodAdmin = async (id) => {
+    if (!window.confirm('Delete this mood log?')) return
+    const { error } = await supabase.from('mood_logs').delete().eq('id', id)
+    if (!error) setMoods(prev => prev.filter(m => m.id !== id))
+  }
+
+  const deleteXpEventAdmin = async (id) => {
+    if (!window.confirm('Delete this XP event?')) return
+    const { error } = await supabase.from('xp_events').delete().eq('id', id)
+    if (!error) setXpEvents(prev => prev.filter(e => e.id !== id))
+  }
+
+  const saveSongTitleAdmin = async (id) => {
+    const title = editSongTitle.trim()
+    if (!title) return
+    const { error } = await supabase.from('songs').update({ title }).eq('id', id)
+    if (!error) {
+      setSongs(prev => prev.map(s => s.id === id ? { ...s, title } : s))
+      setEditingSongId(null)
+    }
+  }
+
+  const toggleFavoriteAdmin = async (song) => {
+    const next = !song.is_favorite
+    const { error } = await supabase.from('songs').update({ is_favorite: next }).eq('id', song.id)
+    if (!error) {
+      setSongs(prev => prev.map(s => s.id === song.id ? { ...s, is_favorite: next } : s))
+    }
+  }
+
+  const deleteUserAdmin = async (u) => {
+    if (u.email === ADMIN_EMAIL) {
+      window.alert('Cannot delete the admin account.')
+      return
+    }
+    const label = u.email || u.id
+    if (!window.confirm(`Permanently delete user "${label}"?\n\nAll songs, moods, XP, rewards, and auth access will be removed. This cannot be undone.`)) {
+      return
+    }
+    try {
+      const res = await fetch(`${API}/admin/users/${u.id}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
+      setProfiles(prev => prev.filter(p => p.id !== u.id))
+      setSongs(prev => prev.filter(s => s.user_id !== u.id))
+      setMoods(prev => prev.filter(m => m.user_id !== u.id))
+      setRewards(prev => prev.filter(r => r.user_id !== u.id))
+      setXpEvents(prev => prev.filter(e => e.user_id !== u.id))
+      setSurveys(prev => prev.filter(sv => sv.user_id !== u.id))
+    } catch (e) {
+      window.alert(`Delete failed: ${e.message}`)
+    }
+  }
+
+  const filteredSurveys = surveys.filter(sv => {
+    if (surveyPhaseFilter !== 'all' && sv.phase !== surveyPhaseFilter) return false
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    const blob = [
+      sv.email, sv.phase, sv.age_group, sv.primary_goal, sv.used_mood_apps,
+      sv.expectations_met, sv.strongest_aspect, sv.weakest_aspect,
+      sv.improvements_needed, sv.genre_preferences, sv.loved_artists,
+      labelFor('primary_goal', sv.primary_goal),
+      labelFor('strongest_aspect', sv.strongest_aspect),
+      labelFor('genre_preferences', sv.genre_preferences),
+    ].join(' ').toLowerCase()
+    return blob.includes(q)
+  })
+
+  const postSurveys = surveys.filter(s => s.phase === 'post')
+  const preSurveys  = surveys.filter(s => s.phase === 'pre')
+  const surveyStats = useMemo(() => ({
+    preCount:  preSurveys.length,
+    postCount: postSurveys.length,
+    postAvg: {
+      experience: avgField(postSurveys, 'experience_rating'),
+      mood:       avgField(postSurveys, 'mood_accuracy'),
+      music:      avgField(postSurveys, 'music_quality'),
+      cultural:   avgField(postSurveys, 'cultural_fit'),
+      recommend:  avgField(postSurveys, 'recommend_score'),
+    },
+    preAvg: {
+      expectedMood: avgField(preSurveys, 'expected_mood_match'),
+      expectedQual: avgField(preSurveys, 'expected_quality'),
+    },
+  }), [postSurveys, preSurveys])
+
   // ── Overview stats ──────────────────────────────────────────────────────────
   const totalXp      = profiles.reduce((s, p) => s + (p.xp || 0), 0)
   const regionCounts = {}; songs.forEach(s => { regionCounts[s.region] = (regionCounts[s.region] || 0) + 1 })
@@ -214,6 +369,7 @@ export default function AdminDashboard({ onExit }) {
     { id:'songs',    icon:'🎵', label:'Songs'     },
     { id:'moods',    icon:'🎭', label:'Moods'     },
     { id:'rewards',  icon:'🏅', label:'Rewards'   },
+    { id:'surveys',  icon:'📋', label:'Surveys'   },
   ]
 
   return (
@@ -230,7 +386,7 @@ export default function AdminDashboard({ onExit }) {
               borderLeftColor: tab === n.id ? '#00e5ff' : 'transparent',
               background: tab === n.id ? 'rgba(0,229,255,.04)' : 'transparent',
             }}
-            onClick={() => setTab(n.id)}
+            onClick={() => { setTab(n.id); setSearch('') }}
           >
             <span style={{ fontSize:15, width:20, textAlign:'center' }}>{n.icon}</span>
             {n.label}
@@ -350,14 +506,14 @@ export default function AdminDashboard({ onExit }) {
                 <table style={{ width:'100%', borderCollapse:'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom:'1px solid rgba(255,255,255,.07)' }}>
-                      {['User','Region','Plan','XP','Streak','Songs','Moods','Joined','Last Active'].map(h => (
+                      {['User','Region','Plan','XP','Streak','Songs','Moods','Joined','Last Active','Actions'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredUsers.length === 0
-                      ? <tr><td colSpan={9} style={s.emptyState}>No users found</td></tr>
+                      ? <tr><td colSpan={10} style={s.emptyState}>No users found</td></tr>
                       : filteredUsers.map(u => {
                           const streak   = u.reward?.streak || 0
                           const plan     = u.plan
@@ -398,6 +554,16 @@ export default function AdminDashboard({ onExit }) {
                               <td style={{ ...s.td, color:'#7c5ce7' }}>{u.moods}</td>
                               <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtDate(u.created_at)}</td>
                               <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{lastMood ? fmtTime(lastMood.created_at) : '—'}</td>
+                              <td style={s.td}>
+                                <button
+                                  style={{ ...s.iconBtn, color:'#ff6b6b' }}
+                                  title="Delete user permanently"
+                                  disabled={u.email === ADMIN_EMAIL}
+                                  onClick={() => deleteUserAdmin(u)}
+                                >
+                                  🗑 Delete
+                                </button>
+                              </td>
                             </tr>
                           )
                         })
@@ -412,25 +578,51 @@ export default function AdminDashboard({ onExit }) {
           {tab === 'songs' && (
             <div style={s.tableWrap}>
               <div style={s.tableSearch}>
-                <span style={{ fontSize:13, fontWeight:800, color:'#e8eaf0' }}>All Generated Songs</span>
-                <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{songs.length} songs</span>
+                <input
+                  style={s.searchInput}
+                  placeholder="Search songs, user, mood, region…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
+                  {filteredSongs.length} / {songs.length} songs
+                </span>
               </div>
               <div style={{ overflowX:'auto' }}>
                 <table style={{ width:'100%', borderCollapse:'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom:'1px solid rgba(255,255,255,.07)' }}>
-                      {['User','Region','Emotion','Language','Artist Style','Mood Label','Valence','Created'].map(h => (
+                      {['User','Title','Region','Emotion','Language','Artist','Mood','Valence','Created','Actions'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {songs.length === 0
-                      ? <tr><td colSpan={8} style={s.emptyState}>No songs yet</td></tr>
-                      : songs.map(song => (
+                    {filteredSongs.length === 0
+                      ? <tr><td colSpan={10} style={s.emptyState}>No songs found</td></tr>
+                      : filteredSongs.map(song => (
                           <tr key={song.id} style={s.tr}>
                             <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                               {emailOf[song.user_id] || song.user_id?.slice(0, 10) || '—'}
+                            </td>
+                            <td style={s.td}>
+                              {editingSongId === song.id ? (
+                                <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                                  <input
+                                    style={{ ...s.searchInput, width:140, padding:'4px 8px' }}
+                                    value={editSongTitle}
+                                    onChange={e => setEditSongTitle(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveSongTitleAdmin(song.id); if (e.key === 'Escape') setEditingSongId(null) }}
+                                    autoFocus
+                                  />
+                                  <button style={s.iconBtn} onClick={() => saveSongTitleAdmin(song.id)}>✓</button>
+                                  <button style={s.iconBtn} onClick={() => setEditingSongId(null)}>✕</button>
+                                </div>
+                              ) : (
+                                <span style={{ fontSize:12, color:'#e8eaf0' }}>
+                                  {song.is_favorite ? '★ ' : ''}{song.title || song.mood_label || '—'}
+                                </span>
+                              )}
                             </td>
                             <td style={s.td}>
                               {song.region
@@ -453,6 +645,21 @@ export default function AdminDashboard({ onExit }) {
                               {song.valence?.toFixed(2) || '—'}
                             </td>
                             <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtTime(song.created_at)}</td>
+                            <td style={s.td}>
+                              <div style={{ display:'flex', gap:4 }}>
+                                <button
+                                  style={{ ...s.iconBtn, color: song.is_favorite ? '#fbbf24' : undefined }}
+                                  title={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
+                                  onClick={() => toggleFavoriteAdmin(song)}
+                                >{song.is_favorite ? '❤️' : '🤍'}</button>
+                                <button
+                                  style={s.iconBtn}
+                                  title="Rename"
+                                  onClick={() => { setEditingSongId(song.id); setEditSongTitle(song.title || song.mood_label || '') }}
+                                >✎</button>
+                                <button style={{ ...s.iconBtn, color:'#ff6b6b' }} title="Delete" onClick={() => deleteSongAdmin(song.id)}>🗑</button>
+                              </div>
+                            </td>
                           </tr>
                         ))
                     }
@@ -466,22 +673,29 @@ export default function AdminDashboard({ onExit }) {
           {tab === 'moods' && (
             <div style={s.tableWrap}>
               <div style={s.tableSearch}>
-                <span style={{ fontSize:13, fontWeight:800, color:'#e8eaf0' }}>Mood Detection Logs</span>
-                <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{moods.length} sessions</span>
+                <input
+                  style={s.searchInput}
+                  placeholder="Search user, emotion, transcript…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
+                  {filteredMoods.length} / {moods.length} sessions
+                </span>
               </div>
               <div style={{ overflowX:'auto' }}>
                 <table style={{ width:'100%', borderCollapse:'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom:'1px solid rgba(255,255,255,.07)' }}>
-                      {['User','Emotion','Valence','Arousal','Language','Region','Confidence','Transcript','Detected At'].map(h => (
+                      {['User','Emotion','Valence','Arousal','Language','Region','Confidence','Transcript','Detected At','Actions'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {moods.length === 0
-                      ? <tr><td colSpan={9} style={s.emptyState}>No mood logs yet</td></tr>
-                      : moods.map(m => (
+                    {filteredMoods.length === 0
+                      ? <tr><td colSpan={10} style={s.emptyState}>No mood logs found</td></tr>
+                      : filteredMoods.map(m => (
                           <tr key={m.id} style={s.tr}>
                             <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                               {emailOf[m.user_id] || m.user_id?.slice(0, 10) || '—'}
@@ -513,6 +727,9 @@ export default function AdminDashboard({ onExit }) {
                               {m.transcript || '—'}
                             </td>
                             <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtTime(m.created_at)}</td>
+                            <td style={s.td}>
+                              <button style={{ ...s.iconBtn, color:'#ff6b6b' }} title="Delete" onClick={() => deleteMoodAdmin(m.id)}>🗑</button>
+                            </td>
                           </tr>
                         ))
                     }
@@ -527,8 +744,15 @@ export default function AdminDashboard({ onExit }) {
             <>
               <div style={s.tableWrap}>
                 <div style={s.tableSearch}>
-                  <span style={{ fontSize:13, fontWeight:800, color:'#e8eaf0' }}>Rewards & XP</span>
-                  <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{rewards.length} users</span>
+                  <input
+                    style={s.searchInput}
+                    placeholder="Search user email…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
+                    {filteredRewards.length} / {rewards.length} users
+                  </span>
                 </div>
                 <div style={{ overflowX:'auto' }}>
                   <table style={{ width:'100%', borderCollapse:'collapse' }}>
@@ -540,9 +764,9 @@ export default function AdminDashboard({ onExit }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rewards.length === 0
-                        ? <tr><td colSpan={5} style={s.emptyState}>No rewards yet</td></tr>
-                        : rewards.map(r => (
+                      {filteredRewards.length === 0
+                        ? <tr><td colSpan={5} style={s.emptyState}>No rewards found</td></tr>
+                        : filteredRewards.map(r => (
                             <tr key={r.user_id} style={s.tr}>
                               <td style={{ ...s.td, fontSize:11, fontFamily:'DM Mono,monospace', color:'#4a5168' }}>
                                 {emailOf[r.user_id] || r.user_id?.slice(0, 12) || '—'}
@@ -571,22 +795,29 @@ export default function AdminDashboard({ onExit }) {
 
               <div style={s.tableWrap}>
                 <div style={s.tableSearch}>
-                  <span style={{ fontSize:13, fontWeight:800, color:'#e8eaf0' }}>XP Event Log</span>
-                  <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>last {Math.min(xpEvents.length, 200)}</span>
+                  <input
+                    style={s.searchInput}
+                    placeholder="Search user or action…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  <span style={{ marginLeft:'auto', fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
+                    {filteredXpEvents.length} / {xpEvents.length} events
+                  </span>
                 </div>
                 <div style={{ overflowX:'auto' }}>
                   <table style={{ width:'100%', borderCollapse:'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom:'1px solid rgba(255,255,255,.07)' }}>
-                        {['User','Action','XP','Time'].map(h => (
+                        {['User','Action','XP','Time','Actions'].map(h => (
                           <th key={h} style={s.th}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {xpEvents.length === 0
-                        ? <tr><td colSpan={4} style={s.emptyState}>No XP events yet</td></tr>
-                        : xpEvents.slice(0, 50).map(e => (
+                      {filteredXpEvents.length === 0
+                        ? <tr><td colSpan={5} style={s.emptyState}>No XP events found</td></tr>
+                        : filteredXpEvents.slice(0, 50).map(e => (
                             <tr key={e.id} style={s.tr}>
                               <td style={{ ...s.td, fontSize:11, fontFamily:'DM Mono,monospace', color:'#4a5168' }}>
                                 {emailOf[e.user_id] || e.user_id?.slice(0, 12) || '—'}
@@ -594,6 +825,146 @@ export default function AdminDashboard({ onExit }) {
                               <td style={{ ...s.td, fontSize:12 }}>{e.action || '—'}</td>
                               <td style={{ ...s.td, fontWeight:700, color:'#00e5ff', fontFamily:'DM Mono,monospace' }}>+{e.xp || 0}</td>
                               <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtTime(e.created_at)}</td>
+                              <td style={s.td}>
+                                <button style={{ ...s.iconBtn, color:'#ff6b6b' }} title="Delete" onClick={() => deleteXpEventAdmin(e.id)}>🗑</button>
+                              </td>
+                            </tr>
+                          ))
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ══ SURVEYS ══ */}
+          {tab === 'surveys' && (
+            <>
+              <div style={{ ...s.statsGrid, gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 20 }}>
+                <StatCard label="Pre-test responses" value={surveyStats.preCount} sub="Before using Ekko" accent="#00e5ff" />
+                <StatCard label="Post-test responses" value={surveyStats.postCount} sub="After session" accent="#34d399" />
+                <StatCard
+                  label="Post avg · mood accuracy"
+                  value={surveyStats.postAvg.mood}
+                  sub={`Music ${surveyStats.postAvg.music} · Cultural ${surveyStats.postAvg.cultural}`}
+                  accent="#a78bfa"
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                {['all', 'pre', 'post'].map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setSurveyPhaseFilter(p)}
+                    style={{
+                      ...s.refreshBtn,
+                      background: surveyPhaseFilter === p ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
+                      color: surveyPhaseFilter === p ? '#e0d8ff' : '#4a5168',
+                      borderColor: surveyPhaseFilter === p ? 'rgba(168,85,247,.4)' : 'rgba(255,255,255,.08)',
+                    }}
+                  >
+                    {p === 'all' ? 'All' : p === 'pre' ? 'Pre-test' : 'Post-test'}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  style={{ ...s.refreshBtn, marginLeft: 'auto' }}
+                  onClick={() => exportSurveysCsv(filteredSurveys)}
+                >
+                  Export CSV ↓
+                </button>
+              </div>
+
+              <div style={s.tableWrap}>
+                <div style={s.tableSearch}>
+                  <input
+                    style={s.searchInput}
+                    placeholder="Search email, goal, aspects, improvements…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>
+                    {filteredSurveys.length} responses
+                  </span>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+                        {(surveyPhaseFilter === 'post'
+                          ? ['User', 'Overall', 'Ease', 'Mood', 'Music', 'Culture', 'Lyrics', 'Co-create', 'Expect met', 'Recommend', 'Use again', 'Best', 'Weakest', 'Improvements', 'Submitted']
+                          : surveyPhaseFilter === 'pre'
+                            ? ['User', 'Age', 'Music freq', 'AI fam', 'Mood apps', 'Goal', 'Culture imp', 'Exp mood', 'Exp quality', 'Genres', 'Fav artists', 'Improvements', 'Submitted']
+                            : ['User', 'Phase', 'Key scores / fields', 'Improvements', 'Submitted']
+                        ).map(h => (
+                          <th key={h} style={s.th}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSurveys.length === 0
+                        ? <tr><td colSpan={15} style={s.emptyState}>No survey responses yet — run migrations add_study_surveys.sql & extend_study_surveys.sql</td></tr>
+                        : filteredSurveys.map(sv => (
+                            <tr key={sv.id || `${sv.user_id}-${sv.phase}`} style={s.tr}>
+                              {surveyPhaseFilter === 'post' ? (
+                                <>
+                                  <td style={{ ...s.td, fontSize: 11, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
+                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
+                                  </td>
+                                  <td style={s.td}>{sv.experience_rating ?? '—'}</td>
+                                  <td style={s.td}>{sv.ease_of_use ?? '—'}</td>
+                                  <td style={s.td}>{sv.mood_accuracy ?? '—'}</td>
+                                  <td style={s.td}>{sv.music_quality ?? '—'}</td>
+                                  <td style={s.td}>{sv.cultural_fit ?? '—'}</td>
+                                  <td style={s.td}>{sv.lyrics_quality ?? '—'}</td>
+                                  <td style={s.td}>{sv.cocreation_rating ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }}>{labelFor('expectations_met', sv.expectations_met)}</td>
+                                  <td style={s.td}>{sv.recommend_score ?? '—'}</td>
+                                  <td style={s.td}>{sv.would_use_again ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }}>{labelFor('strongest_aspect', sv.strongest_aspect)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }}>{labelFor('weakest_aspect', sv.weakest_aspect)}</td>
+                                  <td style={{ ...s.td, fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
+                                </>
+                              ) : surveyPhaseFilter === 'pre' ? (
+                                <>
+                                  <td style={{ ...s.td, fontSize: 11, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
+                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
+                                  </td>
+                                  <td style={s.td}>{labelFor('age_group', sv.age_group)}</td>
+                                  <td style={s.td}>{sv.music_frequency ?? '—'}</td>
+                                  <td style={s.td}>{sv.ai_familiarity ?? '—'}</td>
+                                  <td style={s.td}>{labelFor('used_mood_apps', sv.used_mood_apps)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }}>{labelFor('primary_goal', sv.primary_goal)}</td>
+                                  <td style={s.td}>{sv.cultural_importance ?? '—'}</td>
+                                  <td style={s.td}>{sv.expected_mood_match ?? '—'}</td>
+                                  <td style={s.td}>{sv.expected_quality ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={labelFor('genre_preferences', sv.genre_preferences)}>{labelFor('genre_preferences', sv.genre_preferences)}</td>
+                                  <td style={{ ...s.td, fontSize: 11, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.loved_artists || ''}>{sv.loved_artists || '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
+                                </>
+                              ) : (
+                                <>
+                                  <td style={{ ...s.td, fontSize: 11, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
+                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
+                                  </td>
+                                  <td style={s.td}>
+                                    <span style={{ ...s.tag, background: sv.phase === 'pre' ? 'rgba(0,229,255,.1)' : 'rgba(52,211,153,.1)', color: sv.phase === 'pre' ? '#00e5ff' : '#34d399', border: `1px solid ${sv.phase === 'pre' ? 'rgba(0,229,255,.3)' : 'rgba(52,211,153,.3)'}` }}>
+                                      {sv.phase}
+                                    </span>
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: 11 }}>
+                                    {sv.phase === 'pre'
+                                      ? `Goal: ${labelFor('primary_goal', sv.primary_goal)} · Exp mood ${sv.expected_mood_match ?? '—'}`
+                                      : `Mood ${sv.mood_accuracy ?? '—'} · Music ${sv.music_quality ?? '—'} · Rec ${sv.recommend_score ?? '—'}`}
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: 11, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
+                                </>
+                              )}
                             </tr>
                           ))
                       }
@@ -634,6 +1005,7 @@ const s = {
   tableWrap:   { background:'#0e1320', border:'1px solid rgba(255,255,255,.07)', borderRadius:14, overflow:'hidden', marginBottom:28 },
   tableSearch: { padding:'14px 18px', borderBottom:'1px solid rgba(255,255,255,.07)', display:'flex', alignItems:'center', gap:10 },
   searchInput: { background:'#141926', border:'1px solid rgba(255,255,255,.07)', borderRadius:8, padding:'7px 12px', color:'#e8eaf0', fontSize:12, fontFamily:'DM Mono,monospace', outline:'none', width:260 },
+  iconBtn:     { background:'#141926', border:'1px solid rgba(255,255,255,.1)', borderRadius:6, padding:'4px 8px', color:'#8b9ab0', fontSize:12, cursor:'pointer' },
   th:          { padding:'10px 16px', textAlign:'left', fontSize:10, fontWeight:700, color:'#4a5168', textTransform:'uppercase', letterSpacing:'.08em', fontFamily:'DM Mono,monospace', whiteSpace:'nowrap' },
   td:          { padding:'12px 16px', fontSize:12, borderBottom:'1px solid rgba(255,255,255,.03)' },
   tr:          {},

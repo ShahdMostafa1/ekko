@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import create_client
 
+from plan_gate import generate_api_key, mask_api_key
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -565,3 +567,38 @@ async def stripe_webhook(request: Request):
             supabase.table("profiles").update({"plan_status": "past_due"}).eq("id", row.data["id"]).execute()
 
     return JSONResponse({"status": "ok"})
+
+
+# ── Studio API keys ───────────────────────────────────────────────────────────
+class ApiKeyRequest(BaseModel):
+    user_id: str
+
+
+@router.get("/api-key/{user_id}")
+async def get_api_key_status(user_id: str):
+    """Return API key status (masked). Studio plan only."""
+    row = supabase.table("profiles").select("plan, api_key").eq("id", user_id).single().execute()
+    profile = row.data or {}
+    plan = profile.get("plan", "free")
+    key = profile.get("api_key")
+    return {
+        "plan": plan,
+        "has_key": bool(key),
+        "masked_key": mask_api_key(key),
+        "api_access": plan == "studio",
+    }
+
+
+@router.post("/api-key")
+async def create_or_rotate_api_key(body: ApiKeyRequest):
+    """Generate or rotate Studio API key."""
+    row = supabase.table("profiles").select("plan").eq("id", body.user_id).single().execute()
+    profile = row.data or {}
+    if profile.get("plan") != "studio":
+        raise HTTPException(403, detail="Studio plan required for API access.")
+    key = generate_api_key()
+    supabase.table("profiles").update({"api_key": key}).eq("id", body.user_id).execute()
+    return {
+        "api_key": key,
+        "message": "Store this key securely — it won't be shown again in full.",
+    }

@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from "react";
+import { canDownload, hasPriorityQueue } from '../utils/planUtils';
 
-const POLL_INTERVAL = 4000;
+const POLL_INTERVAL_FREE = 4000;
+const POLL_INTERVAL_PRIORITY = 2500;
 const POLL_TIMEOUT  = 360000;
 
-export default function MusicPlayer({ params, onSaved }) {
+export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free', onUpgrade }) {
   const audioRef     = useRef(null);
   const pollRef      = useRef(null);
   const pollStartRef = useRef(null);
@@ -27,6 +29,10 @@ export default function MusicPlayer({ params, onSaved }) {
   const regionLabel = params?.region_label || (region ? `🌍 ${region}` : "");
   const language    = params?.language     || "";
   const songTitle   = params?.title        || "Your Mood Song";
+  const pollInterval = hasPriorityQueue(userPlan) || params?.priority_queue
+    ? POLL_INTERVAL_PRIORITY
+    : POLL_INTERVAL_FREE;
+  const isPriority   = pollInterval === POLL_INTERVAL_PRIORITY;
 
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
@@ -41,7 +47,8 @@ export default function MusicPlayer({ params, onSaved }) {
         setPollStatus("Took too long. Please try again.");
         return;
       }
-      if (elapsed < 15)       setPollStatus("Writing your song lyrics…");
+      if (isPriority && elapsed < 15) setPollStatus("Priority queue — writing lyrics…");
+      else if (elapsed < 15)       setPollStatus("Writing your song lyrics…");
       else if (elapsed < 30)  setPollStatus("Composing the melody…");
       else if (elapsed < 60)  setPollStatus("Recording vocals…");
       else if (elapsed < 120) setPollStatus("Mixing the track…");
@@ -63,12 +70,12 @@ export default function MusicPlayer({ params, onSaved }) {
       } catch (err) {
         console.error("[poll] error:", err);
       }
-      pollRef.current = setTimeout(poll, POLL_INTERVAL);
+      pollRef.current = setTimeout(poll, pollInterval);
     };
 
-    pollRef.current = setTimeout(poll, 2000);
+    pollRef.current = setTimeout(poll, isPriority ? 1200 : 2000);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [taskId, audioUrl]);
+  }, [taskId, audioUrl, pollInterval, isPriority]);
 
   // ── Save song once audio URL is ready ─────────────────────
   useEffect(() => {
@@ -156,7 +163,7 @@ export default function MusicPlayer({ params, onSaved }) {
   // ── Generating screen ──────────────────────────────────────
   if (polling || (!audioUrl && taskId)) {
     return (
-      <div style={s.card}>
+      <div className="mp-card" style={s.card}>
         <div style={s.orb} />
         <p style={s.pollLabel}>{pollStatus}</p>
         {lyrics && (
@@ -176,7 +183,7 @@ export default function MusicPlayer({ params, onSaved }) {
 
   if (!audioUrl) {
     return (
-      <div style={s.card}>
+      <div className="mp-card" style={s.card}>
         <p style={s.errorText}>{pollStatus || "No audio available."}</p>
         <style>{keyframes}</style>
       </div>
@@ -185,7 +192,7 @@ export default function MusicPlayer({ params, onSaved }) {
 
   // ── Player ─────────────────────────────────────────────────
   return (
-    <div style={s.card}>
+    <div className="mp-card" style={s.card}>
       <audio
         ref={audioRef} src={audioUrl}
         onCanPlay={onCanPlay} onError={onError}
@@ -270,13 +277,22 @@ export default function MusicPlayer({ params, onSaved }) {
 
       {/* Action row — Download + Share */}
       {!audioLoading && !audioError && (
-        <div style={s.actionRow}>
-          <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 20h18"/>
-            </svg>
-            Download
-          </a>
+        <div className="mp-action-row" style={s.actionRow}>
+          {canDownload(userPlan) ? (
+            <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 20h18"/>
+              </svg>
+              Download
+            </a>
+          ) : (
+            <button type="button" style={{ ...s.actionBtn, cursor: 'pointer', opacity: 0.85 }} onClick={() => onUpgrade?.()}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              🔒 Download (Groove+)
+            </button>
+          )}
           <button style={{ ...s.actionBtn, cursor: "pointer", border: "none" }} onClick={handleShare}>
             {copied ? (
               <>
@@ -296,6 +312,17 @@ export default function MusicPlayer({ params, onSaved }) {
             )}
           </button>
         </div>
+      )}
+
+      {onDone && !audioLoading && !audioError && audioUrl && (
+        <button
+          type="button"
+          className="mp-done-btn"
+          style={s.doneBtn}
+          onClick={onDone}
+        >
+          Done — continue →
+        </button>
       )}
 
       {/* Lyrics */}
@@ -433,6 +460,21 @@ const s = {
     borderRadius: 14, textDecoration: "none",
     transition: "background .2s, transform .12s",
   },
+  doneBtn: {
+    width: "100%",
+    marginTop: 4,
+    padding: "14px 0",
+    border: "none",
+    borderRadius: 14,
+    background: "linear-gradient(135deg,#7c5ce7,#a855f7)",
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 6px 24px rgba(124,92,231,.45)",
+    transition: "opacity .2s, transform .12s",
+  },
   lyricsSection: { width: "100%", display: "flex", flexDirection: "column", gap: 8 },
   lyricsToggle: {
     background: "rgba(168,85,247,.12)", border: "1px solid rgba(168,85,247,.28)",
@@ -470,5 +512,16 @@ const keyframes = `
   @keyframes albumGlow {
     0%,100% { opacity: .3; }
     50%      { opacity: .7; }
+  }
+  @media (max-width: 520px) {
+    .mp-card {
+      max-width: 100% !important;
+      padding: 24px 16px !important;
+      border-radius: 22px !important;
+      gap: 16px !important;
+    }
+    .mp-action-row {
+      flex-direction: column !important;
+    }
   }
 `;

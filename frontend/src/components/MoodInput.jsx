@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { clampEmotionForPlan, isPaidPlan, dailyLimitFor } from '../utils/planUtils';
+import { EKKO_HOOK_SHORT } from '../utils/tagline';
 
 // ── Expanded Emotion → mood card mapping (7 core + 13 nuanced = 20 total) ─────
 const EMOTION_CARDS = {
@@ -215,66 +217,200 @@ const QUIZ_QUESTIONS = [
   },
 ];
 
-const LANG_FLAGS = {
-  ar:"🇪🇬", en:"🇬🇧", fr:"🇫🇷", es:"🇪🇸", de:"🇩🇪", hi:"🇮🇳",
-  tr:"🇹🇷", pt:"🇵🇹", zh:"🇨🇳", ja:"🇯🇵", ko:"🇰🇷", ru:"🇷🇺",
-  it:"🇮🇹", nl:"🇳🇱", pl:"🇵🇱", uk:"🇺🇦",
+const CORE_EMOTION_KEYS = ['joy', 'sadness', 'anger', 'fear', 'surprise', 'disgust', 'neutral'];
+
+const NUANCED_EMOTION_KEYS = [
+  'nostalgia', 'grief', 'exhaustion', 'euphoria', 'tenderness', 'frustration',
+  'loneliness', 'wonder', 'hope', 'fedup', 'passion', 'bittersweet', 'calm',
+];
+
+const CORE_MOOD_DEFAULTS = {
+  joy:       { valence: 0.82, energy: 0.68 },
+  sadness:   { valence: 0.22, energy: 0.35 },
+  anger:     { valence: 0.28, energy: 0.78 },
+  fear:      { valence: 0.32, energy: 0.62 },
+  surprise:  { valence: 0.58, energy: 0.72 },
+  disgust:   { valence: 0.30, energy: 0.48 },
+  neutral:   { valence: 0.50, energy: 0.42 },
 };
 
-export default function MoodInput({ userId = "", region = null, onMoodDetected, onSubmit }) {
+const LANG_FLAGS = {
+  ar:"🇪🇬", en:"🇬🇧", fr:"🇫🇷", es:"🇪🇸", de:"🇩🇪", hi:"🇮🇳", ne:"🇳🇵",
+  tr:"🇹🇷", pt:"🇵🇹", zh:"🇨🇳", ja:"🇯🇵", ko:"🇰🇷", ru:"🇷🇺",
+  it:"🇮🇹", nl:"🇳🇱", pl:"🇵🇱", uk:"🇺🇦", bn:"🇧🇩", ta:"🇮🇳", te:"🇮🇳",
+  yo:"🇳🇬", ha:"🇳🇬", wo:"🇸🇳", pcm:"🇳🇬",
+};
+
+const LANG_NAMES = {
+  ar:"Arabic", en:"English", fr:"French", es:"Spanish", de:"German", hi:"Hindi",
+  ne:"Nepali", tr:"Turkish", pt:"Portuguese", zh:"Chinese", ja:"Japanese",
+  ko:"Korean", ru:"Russian", it:"Italian", bn:"Bengali", ta:"Tamil", te:"Telugu",
+};
+
+export default function MoodInput({ userId = "", region = null, language = null, userPlan = "free", onUpgrade, onMoodDetected, onSubmit }) {
   const [tab, setTab]                     = useState("voice");
   const [lang, setLang]                   = useState("en");
   const [recording, setRecording]         = useState(false);
   const [voiceStatus, setVoiceStatus]     = useState("idle");
   const [transcript, setTranscript]       = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
   const [detectedLang, setDetectedLang]   = useState("");
   const [detectedMood, setDetectedMood]   = useState(null);
   const [textAnalysing, setTextAnalysing] = useState(false);
   const mediaRecorderRef = useRef(null);
   const chunksRef        = useRef([]);
   const mimeTypeRef      = useRef("audio/webm");
+  const speechRecRef     = useRef(null);
+  const speechHintRef    = useRef("");
+  const recordingRef     = useRef(false);
   const [textInput, setTextInput] = useState("");
   const [textMood, setTextMood]   = useState(null);
   const [quizStep, setQuizStep]       = useState(0);
   const [quizAnswers, setQuizAnswers] = useState([]);
   const [quizMood, setQuizMood]       = useState(null);
+  const [dailyUsage, setDailyUsage]   = useState(null);
 
   const isAr = lang === "ar";
 
   useEffect(() => {
+    if (!userId) { setDailyUsage(null); return; }
+    fetch(`${import.meta.env.VITE_API_URL}/music/usage/${userId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setDailyUsage(data); })
+      .catch(() => {});
+  }, [userId]);
+
+  useEffect(() => {
     return () => {
+      speechRecRef.current?.stop();
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
     };
   }, []);
 
-  const toggleRecord = async () => {
-    if (recording) { mediaRecorderRef.current?.stop(); setRecording(false); return; }
+  const SPEECH_RECO_LANG = {
+    "ar-eg": "ar-EG", "ar-lv": "ar-LB", "ar-gulf": "ar-SA", "ar-ma": "ar-MA",
+    en: "en-US", hi: "hi-IN", ta: "ta-IN", te: "te-IN", bn: "bn-BD",
+    zh: "zh-CN", ja: "ja-JP", ko: "ko-KR", fr: "fr-FR", de: "de-DE",
+    es: "es-ES", pt: "pt-BR", it: "it-IT", ne: "ne-NP", tr: "tr-TR",
+    ru: "ru-RU", yo: "yo-NG", ha: "ha-NG", wo: "wo-SN", pcm: "en-NG",
+  };
+
+  const startBrowserSpeech = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
     try {
-      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      const rec = new SR();
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      rec.continuous     = !isSafari;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      const code = language?.code || "";
+      rec.lang = SPEECH_RECO_LANG[code] || navigator.language || "en-US";
+      speechHintRef.current = "";
+      rec.onresult = (e) => {
+        let text = "";
+        for (let i = e.results.length - 1; i >= 0; i--) {
+          if (e.results[i].isFinal && e.results[i][0]?.transcript) {
+            text = e.results[i][0].transcript;
+            break;
+          }
+        }
+        if (!text) {
+          for (let i = 0; i < e.results.length; i++) {
+            if (e.results[i][0]?.transcript) text += e.results[i][0].transcript;
+          }
+        }
+        const trimmed = text.trim();
+        if (trimmed) {
+          speechHintRef.current = trimmed;
+          setLiveTranscript(trimmed);
+        }
+      };
+      rec.onend = () => {
+        if (recordingRef.current && speechRecRef.current === rec) {
+          try { rec.start(); } catch { /* ignore */ }
+        }
+      };
+      rec.onerror = (e) => console.warn("Speech recognition:", e.error);
+      rec.start();
+      speechRecRef.current = rec;
+    } catch (err) {
+      console.warn("Browser speech recognition unavailable:", err);
+    }
+  };
+
+  const stopBrowserSpeech = () => {
+    try { speechRecRef.current?.stop(); } catch { /* ignore */ }
+    speechRecRef.current = null;
+  };
+
+  const toggleRecord = async () => {
+    if (recording) {
+      recordingRef.current = false;
+      stopBrowserSpeech();
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+    try {
+      const stream   = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+          channelCount:     1,
+        },
+      });
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      const mimeType = isSafari && MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+        : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
+        : "";
       mimeTypeRef.current = mimeType || "audio/webm";
-      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 128000 } : {});
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        recordingRef.current = false;
+        stopBrowserSpeech();
         setRecording(false); setVoiceStatus("analysing");
         setDetectedMood(null); setTranscript(""); setDetectedLang("");
         const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
-        await analyzeVoice(blob, mimeTypeRef.current);
+        const hint = (speechHintRef.current || liveTranscript || "").trim();
+        await analyzeVoice(blob, mimeTypeRef.current, hint);
+        setLiveTranscript("");
       };
-      mediaRecorder.start();
+      mediaRecorder.start(250);
+      recordingRef.current = true;
+      startBrowserSpeech();
       setRecording(true); setVoiceStatus("recording");
-      setDetectedMood(null); setTranscript(""); setDetectedLang("");
+      setDetectedMood(null); setTranscript(""); setDetectedLang(""); setLiveTranscript("");
     } catch (err) {
       console.error("Mic error:", err);
       setVoiceStatus("error");
     }
+  };
+
+  const applyPlanToMood = (mood) => {
+    if (isPaidPlan(userPlan)) return mood;
+    const rawKey = mood.nuancedKey || mood.emotion;
+    const clampedKey = clampEmotionForPlan(rawKey, userPlan);
+    if (clampedKey === rawKey) return mood;
+    const card = EMOTION_CARDS[clampedKey] || EMOTION_CARDS.neutral;
+    return {
+      ...mood,
+      label: card.label, labelAr: card.labelAr,
+      tags: card.tags, tagsAr: card.tagsAr,
+      color: card.color, emoji: card.emoji,
+      emotion: clampedKey, nuancedKey: clampedKey, planClamped: true,
+    };
   };
 
   const buildMood = (data, inputText = "") => {
@@ -283,25 +419,33 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       label: data.top_emotion, labelAr: data.top_emotion,
       tags: [], tagsAr: [], color: "#b09ee0", emoji: "💭",
     };
-    return { ...card, valence: data.valence, energy: data.arousal, confidence: data.confidence,
+    return applyPlanToMood({
+      ...card, valence: data.valence, energy: data.arousal, confidence: data.confidence,
       emotion: data.top_emotion, nuancedKey: nuanced, reasoning: data.reasoning,
-      text: inputText || data.transcript || "" };
+      text: inputText || data.transcript || "",
+    });
   };
 
-  const analyzeVoice = async (audioBlob, mimeType = "audio/webm") => {
+  const analyzeVoice = async (audioBlob, mimeType = "audio/webm", speechHint = "") => {
     try {
       const ext      = mimeType.includes("mp4") ? "mp4" : mimeType.includes("ogg") ? "ogg" : "webm";
       const formData = new FormData();
-      formData.append("audio",   audioBlob, `mood.${ext}`);
-      formData.append("user_id", userId || "");
-      formData.append("region",  region?.id || "");
+      formData.append("audio",           audioBlob, `mood.${ext}`);
+      formData.append("user_id",         userId || "");
+      formData.append("region",          region?.id || "");
+      formData.append("transcript_hint", speechHint || "");
+      formData.append("language_hint",   language?.code || "");
       const res = await fetch(`${import.meta.env.VITE_API_URL}/mood/detect`, { method: "POST", body: formData });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (data.language === "ar") setLang("ar");
-      const mood = buildMood(data, data.transcript);
-      setDetectedMood(mood); setTranscript(data.transcript);
-      setDetectedLang(data.language || ""); setVoiceStatus("done");
+      const finalTranscript = (data.transcript || speechHint || "").trim();
+      const langCode = (data.language || language?.code || "").toLowerCase().split("-")[0];
+      if (langCode === "ar") setLang("ar");
+      const mood = buildMood({ ...data, transcript: finalTranscript }, finalTranscript);
+      setDetectedMood(mood);
+      setTranscript(finalTranscript);
+      setDetectedLang(langCode);
+      setVoiceStatus(finalTranscript ? "done" : "partial");
       onMoodDetected?.(mood);
     } catch (err) {
       console.error("Voice analysis failed:", err);
@@ -325,7 +469,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       console.error("Text analysis failed, using fallback:", err);
       const emotion = detectEmotionFromText(textInput);
       const card    = EMOTION_CARDS[emotion];
-      const mood    = { ...card, emotion, nuancedKey: emotion, valence: 0.5, energy: 0.5, text: textInput };
+      const mood    = applyPlanToMood({ ...card, emotion, nuancedKey: emotion, valence: 0.5, energy: 0.5, text: textInput });
       setTextMood(mood); onMoodDetected?.(mood);
     } finally {
       setTextAnalysing(false);
@@ -349,7 +493,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
       const avgA    = totalArousal / answers.length;
       const nuanced = resolveNuancedEmotion(winner, avgV, avgA);
       const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[winner];
-      const mood    = { ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner };
+      const mood    = applyPlanToMood({ ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner });
       setQuizMood(mood); onMoodDetected?.(mood);
     }
   };
@@ -357,12 +501,102 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
   const resetQuiz = () => { setQuizStep(0); setQuizAnswers([]); setQuizMood(null); };
 
   const handleContinue = (mood) => {
+    const planned = applyPlanToMood(mood);
     onSubmit?.({
-      label:   isAr ? mood.labelAr : mood.label,
-      tags:    isAr ? mood.tagsAr  : mood.tags,
-      valence: mood.valence, energy: mood.energy,
-      emotion: mood.emotion, text: mood.text || mood.label,
+      label:   isAr ? planned.labelAr : planned.label,
+      tags:    isAr ? planned.tagsAr  : planned.tags,
+      valence: planned.valence, energy: planned.energy,
+      emotion: clampEmotionForPlan(planned.nuancedKey || planned.emotion, userPlan),
+      text: planned.text || planned.label,
+      source: tab,
     });
+  };
+
+  const buildQuickMood = (emotionKey) => {
+    const card = EMOTION_CARDS[emotionKey];
+    const defaults = CORE_MOOD_DEFAULTS[emotionKey] || { valence: 0.5, energy: 0.5 };
+    return applyPlanToMood({
+      ...card,
+      emotion: emotionKey,
+      nuancedKey: emotionKey,
+      valence: defaults.valence,
+      energy: defaults.energy,
+      text: isAr ? card.labelAr : card.label,
+    });
+  };
+
+  const selectQuickEmotion = (emotionKey) => {
+    const mood = buildQuickMood(emotionKey);
+    onMoodDetected?.(mood);
+    handleContinue(mood);
+  };
+
+  const QuickEmotionPicker = () => {
+    const paid = isPaidPlan(userPlan);
+    const unlockedKeys = paid ? [...CORE_EMOTION_KEYS, ...NUANCED_EMOTION_KEYS] : CORE_EMOTION_KEYS;
+
+    return (
+      <div className="mi-quick-emotions">
+        <p className="mi-quick-label">
+          {isAr ? "أو اختار مزاجك مباشرة" : "Or pick a mood"}
+        </p>
+        <div className="mi-emotion-circles">
+          {unlockedKeys.map((key) => {
+            const card = EMOTION_CARDS[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                className="mi-emotion-circle"
+                style={{ "--ec": card.color }}
+                onClick={() => selectQuickEmotion(key)}
+                title={isAr ? card.labelAr : card.label}
+                aria-label={isAr ? card.labelAr : card.label}
+              >
+                <span className="mi-emotion-emoji">{card.emoji}</span>
+              </button>
+            );
+          })}
+          {!paid && NUANCED_EMOTION_KEYS.map((key) => {
+            const card = EMOTION_CARDS[key];
+            return (
+              <button
+                key={`locked-${key}`}
+                type="button"
+                className="mi-emotion-circle mi-emotion-circle--locked"
+                style={{ "--ec": card.color }}
+                onClick={() => onUpgrade?.()}
+                title={isAr ? `${card.labelAr} — ترقية لفتح` : `${card.label} — upgrade to unlock`}
+                aria-label={isAr ? `${card.labelAr} — مقفول` : `${card.label} — locked`}
+              >
+                <span className="mi-emotion-emoji mi-emotion-emoji--dim" aria-hidden="true">{card.emoji}</span>
+                <span className="mi-emotion-lock" aria-hidden="true">🔒</span>
+              </button>
+            );
+          })}
+        </div>
+        {!paid && (
+          <p className="mi-quick-unlock">
+            {isAr ? (
+              <>
+                +{NUANCED_EMOTION_KEYS.length} مزاج إضافي مقفول.{' '}
+                <button type="button" className="mi-upgrade-link" onClick={() => onUpgrade?.()}>
+                  ترقية إلى Groove أو Studio
+                </button>
+              </>
+            ) : (
+              <>
+                +{NUANCED_EMOTION_KEYS.length} nuanced moods locked.{' '}
+                <button type="button" className="mi-upgrade-link" onClick={() => onUpgrade?.()}>
+                  Upgrade to Groove or Studio
+                </button>
+                {' '}to unlock the rest.
+              </>
+            )}
+          </p>
+        )}
+      </div>
+    );
   };
 
   const MoodCard = ({ mood, showValence = false }) => (
@@ -403,12 +637,23 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
     if (recording)                   return "Listening… tap when you're done";
     if (voiceStatus === "analysing") return "Analysing your voice…";
     if (voiceStatus === "done")      return "Tap to speak again";
+    if (voiceStatus === "partial")   return isAr ? "تم — بعض الكلمات قد لا تكون دقيقة" : "Done — some words may need a retry";
     if (voiceStatus === "error")     return "Could not detect — try again";
     return "Tap to speak — any language";
   };
 
   return (
     <div className="mi-root" dir={isAr ? "rtl" : "ltr"}>
+
+      <p className="mi-hook">{isAr ? 'شارك مزاجك — إيكو يحوّله لأغنية.' : EKKO_HOOK_SHORT}</p>
+
+      {!isPaidPlan(userPlan) && (
+        <div className="mi-plan-banner">
+          {isAr
+            ? `مجاني: 7 مزاج أساسي · ${dailyUsage?.used ?? 0}/${dailyUsage?.limit ?? dailyLimitFor(userPlan)} أغاني اليوم · Global Mix فقط`
+            : `Free: 7 core moods · ${dailyUsage?.used ?? 0}/${dailyUsage?.limit ?? dailyLimitFor(userPlan)} songs today · Global region only`}
+        </div>
+      )}
 
       {/* ── Language toggle ── */}
       <div className="mi-lang-toggle">
@@ -443,10 +688,20 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
               {recording && <span className="mic-pulse" />}
             </button>
             <p className="voice-lbl">{voiceLabel()}</p>
-            {detectedLang && voiceStatus === "done" && (
-              <p className="lang-badge">{LANG_FLAGS[detectedLang] || "🌐"} {detectedLang.toUpperCase()}</p>
+            {recording && liveTranscript && (
+              <p className="voice-transcript live" dir="auto">&ldquo;{liveTranscript}&rdquo;</p>
             )}
-            {transcript && <p className="voice-transcript">"{transcript}"</p>}
+            {detectedLang && (voiceStatus === "done" || voiceStatus === "partial") && (
+              <p className="lang-badge">
+                {LANG_FLAGS[detectedLang] || "🌐"}{" "}
+                {LANG_NAMES[detectedLang] || detectedLang.toUpperCase()}
+              </p>
+            )}
+            {transcript && (voiceStatus === "done" || voiceStatus === "partial") && (
+              <p className="voice-transcript" dir="auto" lang={detectedLang || undefined}>
+                &ldquo;{transcript}&rdquo;
+              </p>
+            )}
             {recording && (
               <div className="waveform" aria-hidden="true">
                 {[10,18,22,28,22,18,10,14,24,14].map((h, i) => (
@@ -463,7 +718,8 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
               <p className="voice-error">{isAr ? "⚠️ تأكد إن الميكروفون شغال" : "⚠️ Make sure your mic is allowed."}</p>
             )}
           </div>
-          {detectedMood && voiceStatus === "done" && (
+          {!detectedMood && voiceStatus !== "analysing" && <QuickEmotionPicker />}
+          {detectedMood && (voiceStatus === "done" || voiceStatus === "partial") && (
             <div className="result-area">
               <MoodCard mood={detectedMood} showValence />
               {detectedMood.confidence !== undefined && (
@@ -494,6 +750,7 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
               {textAnalysing ? (isAr ? "بيحلل…" : "Analysing…") : (isAr ? "حلل مزاجي" : "Analyse my mood")}
             </button>
           </div>
+          {!textMood && !textAnalysing && <QuickEmotionPicker />}
           {textMood && (
             <div className="result-area">
               <MoodCard mood={textMood} showValence />
@@ -584,6 +841,26 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           overflow: hidden;
           border: 1px solid rgba(124, 92, 231, 0.18);
           box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255,255,255,.04);
+        }
+        .mi-hook {
+          margin: 0;
+          padding: 14px 16px 0;
+          text-align: center;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 1.45;
+          color: #b09ee0;
+        }
+
+        .mi-plan-banner {
+          padding: 10px 16px; font-size: 12px; line-height: 1.45;
+          color: rgba(255,255,255,0.72);
+          background: rgba(124, 92, 231, 0.1);
+          border-bottom: 1px solid rgba(124, 92, 231, 0.18);
+        }
+        .mi-upgrade-link {
+          background: none; border: none; padding: 0; color: #a78bfa;
+          font-weight: 600; cursor: pointer; text-decoration: underline;
         }
 
         /* ── Language toggle ── */
@@ -687,6 +964,91 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
         .analysing-dots { display: flex; gap: 6px; align-items: center; }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #7c5ce7; animation: dotBounce .8s ease-in-out infinite alternate; }
         @keyframes dotBounce { from{transform:translateY(0);opacity:.5}to{transform:translateY(-6px);opacity:1} }
+
+        /* ── Quick emotion picker ── */
+        .mi-quick-emotions {
+          width: 100%;
+          padding-top: 4px;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .mi-quick-label {
+          font-size: 12px;
+          color: #6b5f8a;
+          text-align: center;
+          margin: 0 0 12px;
+          font-weight: 500;
+        }
+        .mi-emotion-circles {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 3px;
+          max-width: 100%;
+        }
+        .mi-emotion-circle {
+          position: relative;
+          width: 34px;
+          height: 34px;
+          flex-shrink: 0;
+          border-radius: 50%;
+          border: 1.5px solid rgba(255, 255, 255, 0.08);
+          background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.08), rgba(0,0,0,0.15));
+          box-shadow: 0 0 0 1px color-mix(in srgb, var(--ec) 25%, transparent),
+                      0 2px 8px rgba(0, 0, 0, 0.22);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, filter .18s ease;
+        }
+        .mi-emotion-circle:hover {
+          transform: scale(1.1);
+          border-color: color-mix(in srgb, var(--ec) 55%, transparent);
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--ec) 20%, transparent),
+                      0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        .mi-emotion-circle:active {
+          transform: scale(0.96);
+        }
+        .mi-emotion-circle--locked {
+          filter: saturate(0.4) brightness(0.7);
+          border-color: rgba(255, 255, 255, 0.05);
+          box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12),
+                      0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+        .mi-emotion-circle--locked:hover {
+          transform: scale(1.08);
+          filter: saturate(0.55) brightness(0.8);
+          border-color: rgba(245, 158, 11, 0.4);
+          box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12),
+                      0 5px 14px rgba(0, 0, 0, 0.28);
+        }
+        .mi-emotion-emoji--dim {
+          opacity: 0.28;
+          filter: grayscale(0.6);
+        }
+        .mi-emotion-lock {
+          position: absolute;
+          font-size: 11px;
+          line-height: 1;
+          text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+        }
+        .mi-quick-unlock {
+          font-size: 11px;
+          color: #6b5f8a;
+          text-align: center;
+          margin: 10px 0 0;
+          line-height: 1.5;
+        }
+        .mi-quick-unlock .mi-upgrade-link {
+          font-size: inherit;
+        }
+        .mi-emotion-emoji {
+          font-size: 16px;
+          line-height: 1;
+          display: block;
+        }
 
         /* ── Text ── */
         .text-wrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
@@ -821,6 +1183,13 @@ export default function MoodInput({ userId = "", region = null, onMoodDetected, 
           font-family: inherit;
         }
         .continue-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(124,92,231,.5); }
+
+        @media (max-width: 480px) {
+          .mi-root { border-radius: 16px; max-width: 100%; }
+          .mi-panel { min-height: 260px; padding: 18px 14px; gap: 16px; }
+          .mi-tab { font-size: 12px; padding: 10px 2px; }
+          .mi-tabs { padding: 4px; }
+        }
       `}</style>
     </div>
   );

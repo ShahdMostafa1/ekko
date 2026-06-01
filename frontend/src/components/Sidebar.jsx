@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { id: 'mood',    icon: '🎙', label: 'Create'   },
   { id: 'history', icon: '🎵', label: 'Songs'    },
   { id: 'rewards', icon: '🏅', label: 'Rewards'  },
+  { id: 'survey',  icon: '📋', label: 'Study'    },
   { id: 'plans',   icon: '✨', label: 'Plans'    },
   { id: 'billing', icon: '💳', label: 'Billing'  },
 ]
@@ -15,6 +16,13 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
+
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
 
   // Navigate FIRST, then close after — order matters
   const handleNav = (id) => {
@@ -50,7 +58,8 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
       {/* Sidebar panel */}
       <div style={{
         position:   'fixed', top: 0, left: 0, bottom: 0,
-        width:      270, zIndex: 201,
+        width:      'min(270px, 85vw)', zIndex: 201,
+        paddingLeft: 'env(safe-area-inset-left)',
         background: 'linear-gradient(180deg, #0f0a24 0%, #130d2e 60%, #0a0718 100%)',
         borderRight: '1px solid rgba(124,92,231,.2)',
         boxShadow:  open ? '4px 0 48px rgba(0,0,0,.7)' : 'none',

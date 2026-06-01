@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { canUseArtistStyles } from '../utils/planUtils'
 
 const INSTRUMENTS = [
   { id: 'piano',   emoji: '🎹', label: 'Piano'   },
@@ -43,7 +44,7 @@ function bestRegionForLanguage(langCode, currentRegion) {
   return 'global'
 }
 
-export default function CoCreation({ mood, regionDefaults, region, language, onGenerate }) {
+export default function CoCreation({ mood, regionDefaults, region, language, userPlan = 'free', onUpgrade, onGenerate }) {
   const [tempo, setTempo]               = useState(mood?.energy > 0.5 ? 110 : 72)
   const [selectedScale, setScale]       = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
   const [selectedInstr, setInstr]       = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
@@ -81,12 +82,14 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
     tempo < 130 ? 'Upbeat'    : 'Fast'
   )
 
+  const stylesLocked = !canUseArtistStyles(userPlan)
+
   const handleGenerate = () => {
     onGenerate({
       tempo_bpm:       tempo,
       scale:           selectedScale,
       instruments:     selectedInstr,
-      artist_style_id: selectedArtist,
+      artist_style_id: stylesLocked ? '' : selectedArtist,
     })
   }
 
@@ -114,10 +117,16 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
             {selectedArtistObj ? selectedArtistObj.label : 'Default style'}
           </span>
         </div>
+        {stylesLocked && (
+          <p className="cc-lock-note">
+            🔒 Artist styles require Groove or Studio.{' '}
+            <button type="button" className="cc-upgrade-link" onClick={() => onUpgrade?.()}>Upgrade</button>
+          </p>
+        )}
         {loadingStyles ? (
           <div className="cc-artist-loading">Loading styles…</div>
         ) : (
-          <div className="cc-artist-grid">
+          <div className={`cc-artist-grid ${stylesLocked ? 'cc-artist-grid--locked' : ''}`}>
             <button
               className={`cc-artist-opt ${selectedArtist === '' ? 'sel' : ''}`}
               onClick={() => setArtist('')}
@@ -129,10 +138,10 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
             {artistStyles.map(a => (
               <button
                 key={a.id}
-                className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''}`}
-                onClick={() => setArtist(a.id)}
+                className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''} ${stylesLocked ? 'locked' : ''}`}
+                onClick={() => stylesLocked ? onUpgrade?.() : setArtist(a.id)}
               >
-                <span className="cao-emoji">🎤</span>
+                <span className="cao-emoji">{stylesLocked ? '🔒' : '🎤'}</span>
                 <span className="cao-label">{a.label}</span>
                 <span className="cao-desc">{a.description}</span>
               </button>
@@ -242,6 +251,17 @@ export default function CoCreation({ mood, regionDefaults, region, language, onG
         .cc-artist-loading {
           font-size: 13px; color: #8b7eb8;
           padding: 12px 0; text-align: center;
+        }
+        .cc-lock-note {
+          font-size: 12px; color: #8b7eb8; margin: 0 0 8px;
+        }
+        .cc-upgrade-link {
+          background: none; border: none; padding: 0; color: #a78bfa;
+          font-weight: 600; cursor: pointer; text-decoration: underline;
+        }
+        .cc-artist-opt.locked { opacity: 0.55; cursor: pointer; }
+        .cc-artist-grid--locked .cc-artist-opt:not(:first-child):hover {
+          border-color: rgba(167, 139, 250, 0.4);
         }
       `}</style>
     </div>

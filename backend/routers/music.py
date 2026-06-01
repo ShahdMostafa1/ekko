@@ -9,8 +9,10 @@ GET  /music/artist-styles   → list available artist-style voices per region
 from __future__ import annotations
 import os
 import httpx
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter(prefix="/music", tags=["Layer 3+4 — Cultural Filter & AI Co-Creation"])
 
@@ -26,6 +28,24 @@ OPENROUTER_MODELS = [
 
 MOCK_MODE      = False
 MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0d42b.mp3"
+
+# ── Plan limits (keep in sync with frontend/src/utils/planUtils.js) ─────────
+PLAN_DAILY_LIMITS = {
+    "free":   5,
+    "groove": 50,
+    "studio": None,
+}
+FREE_REGION_IDS = {"global"}
+FREE_CORE_EMOTIONS = {
+    "joy", "sadness", "anger", "fear", "surprise", "disgust", "neutral",
+}
+NUANCED_TO_CORE = {
+    "nostalgia": "sadness", "exhaustion": "sadness", "loneliness": "sadness", "grief": "sadness",
+    "frustration": "anger", "passion": "anger",
+    "euphoria": "joy", "tenderness": "joy",
+    "calm": "neutral", "hope": "neutral", "wonder": "surprise",
+    "bittersweet": "sadness", "fedup": "disgust",
+}
 
 # ── Artist styles per region ──────────────────────────────────────────────────
 ARTIST_STYLES = {
@@ -237,6 +257,63 @@ def _get_supabase():
     return create_client(url, key)
 
 
+def _get_user_plan(sb, user_id: str) -> str:
+    if not sb or not user_id:
+        return "free"
+    try:
+        resp = sb.table("profiles").select("plan").eq("id", user_id).single().execute()
+        plan = (resp.data or {}).get("plan") or "free"
+        return plan if plan in PLAN_DAILY_LIMITS else "free"
+    except Exception:
+        return "free"
+
+
+def _count_today_generations(sb, user_id: str) -> int:
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    try:
+        resp = (
+            sb.table("mood_sessions")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", today_start)
+            .execute()
+        )
+        if resp.count is not None:
+            return resp.count
+    except Exception:
+        pass
+    try:
+        resp = (
+            sb.table("songs")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", today_start)
+            .execute()
+        )
+        return resp.count or 0
+    except Exception:
+        return 0
+
+
+def _clamp_emotion_for_plan(emotion: str, plan: str) -> str:
+    if plan in ("groove", "studio"):
+        return emotion
+    if emotion in FREE_CORE_EMOTIONS:
+        return emotion
+    return NUANCED_TO_CORE.get(emotion, "neutral")
+
+
+def _apply_plan_restrictions(req: "GenerateRequest", plan: str) -> None:
+    if plan in ("groove", "studio"):
+        return
+    req.artist_style_id = ""
+    if req.region not in FREE_REGION_IDS:
+        req.region = "global"
+    req.emotion = _clamp_emotion_for_plan(req.emotion, plan)
+
+
 def _resolve_language(language_code: str, region: str) -> str:
     if language_code and language_code in LANGUAGE_INSTRUCTIONS:
         return language_code
@@ -350,7 +427,7 @@ def _generate_lyrics(
 
 def _build_style_prompt(
     valence: float, energy: float, region: str,
-    mood_label: str, artist_name: str = "",
+    mood_label: str, artist_name: str = "", plan: str = "free",
 ) -> str:
     val_word, en_word = _mood_words(valence, energy)
     style = CULTURAL_STYLES.get(region, CULTURAL_STYLES["global"])
@@ -367,12 +444,21 @@ def _build_style_prompt(
     )
     if artist_name:
         prompt += f" Artist style inspired by {artist_name}."
+    if plan in ("groove", "studio"):
+        prompt += " High-fidelity HD master, crisp vocals, wide dynamic range."
+    else:
+        prompt += " Standard streaming quality."
 
     return prompt
 
 
+def _license_for_plan(plan: str) -> str:
+    return "commercial" if plan == "studio" else "personal"
+
+
 # ── Request models ────────────────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
+    user_id:         str   = ""
     mood_text:       str   = ""
     mood_label:      str   = ""
     valence:         float = 0.5
@@ -414,6 +500,27 @@ async def list_artist_styles(region: str = ""):
 
 @router.post("/generate", summary="Generate lyrics + Sonauto song with artist style")
 async def generate_music(req: GenerateRequest):
+    sb = _get_supabase()
+    plan = _get_user_plan(sb, req.user_id) if req.user_id else "free"
+
+    if req.user_id and sb:
+        daily_limit = PLAN_DAILY_LIMITS.get(plan, PLAN_DAILY_LIMITS["free"])
+        if daily_limit is not None:
+            used = _count_today_generations(sb, req.user_id)
+            if used > daily_limit:
+                raise HTTPException(
+                    429,
+                    detail={
+                        "error": "daily_limit_reached",
+                        "plan": plan,
+                        "limit": daily_limit,
+                        "used": used,
+                        "message": f"Daily generation limit reached ({used}/{daily_limit}). Upgrade for more.",
+                    },
+                )
+
+    _apply_plan_restrictions(req, plan)
+
     mood_label   = req.mood_label or req.emotion
     region_label = REGION_DISPLAY.get(req.region, req.region)
     lang_code    = _resolve_language(req.language_code, req.region)
@@ -454,7 +561,7 @@ async def generate_music(req: GenerateRequest):
     title = _generate_title(mood_label, req.emotion, lyrics)
 
     style_prompt = _build_style_prompt(
-        req.valence, req.energy, req.region, mood_label, artist_name
+        req.valence, req.energy, req.region, mood_label, artist_name, plan
     )
     print(f"[music] Style prompt: {style_prompt}")
 
@@ -489,7 +596,7 @@ async def generate_music(req: GenerateRequest):
 
     return {
         "task_id":          task_id,
-        "title":            title,        # ← NEW
+        "title":            title,
         "prompt_used":      style_prompt,
         "lyrics":           lyrics,
         "region":           req.region,
@@ -501,6 +608,9 @@ async def generate_music(req: GenerateRequest):
         "artist_name":      artist_name,
         "status":           "GENERATING",
         "mock":             False,
+        "plan":             plan,
+        "priority_queue":   plan in ("groove", "studio"),
+        "audio_quality":    "hd" if plan in ("groove", "studio") else "standard",
     }
 
 
@@ -531,33 +641,57 @@ async def get_status(task_id: str):
     return {"status": "GENERATING"}
 
 
+@router.get("/usage/{user_id}", summary="Daily generation usage for plan limits")
+async def get_usage(user_id: str):
+    sb = _get_supabase()
+    plan = _get_user_plan(sb, user_id) if sb else "free"
+    limit = PLAN_DAILY_LIMITS.get(plan, PLAN_DAILY_LIMITS["free"])
+    used = _count_today_generations(sb, user_id) if sb else 0
+    return {
+        "plan": plan,
+        "used": used,
+        "limit": limit,
+        "remaining": None if limit is None else max(0, limit - used),
+    }
+
+
 @router.post("/save", summary="Save finished song to Supabase")
 async def save_song(req: SaveSongRequest):
     sb = _get_supabase()
     if not sb:
         return {"saved": False, "reason": "Supabase not configured"}
+    plan = _get_user_plan(sb, req.user_id)
+    license_type = _license_for_plan(plan)
+    row_data = {
+        "user_id": req.user_id, "region": req.region,
+        "region_label": req.region_label or REGION_DISPLAY.get(req.region, req.region),
+        "mood_label": req.mood_label, "emotion": req.emotion,
+        "valence": req.valence, "energy": req.energy,
+        "lyrics": req.lyrics, "audio_url": req.audio_url,
+        "prompt_used": req.prompt_used, "language": req.language,
+        "artist_style_id": req.artist_style_id, "artist_label": req.artist_label,
+        "title": req.title, "is_favorite": False, "license": license_type,
+    }
     try:
-        sb.table("songs").insert({
-            "user_id":          req.user_id,
-            "region":           req.region,
-            "region_label":     req.region_label or REGION_DISPLAY.get(req.region, req.region),
-            "mood_label":       req.mood_label,
-            "emotion":          req.emotion,
-            "valence":          req.valence,
-            "energy":           req.energy,
-            "lyrics":           req.lyrics,
-            "audio_url":        req.audio_url,
-            "prompt_used":      req.prompt_used,
-            "language":         req.language,
-            "artist_style_id":  req.artist_style_id,
-            "artist_label":     req.artist_label,
-            "title":            req.title,    # ← NEW
-        }).execute()
-        print(f"[music] ✅ Song saved user={req.user_id} title={req.title} artist={req.artist_label}")
-        return {"saved": True}
+        resp = sb.table("songs").insert(row_data).execute()
+        row = (resp.data or [None])[0]
+        print(f"[music] ✅ Song saved user={req.user_id} title={req.title} license={license_type}")
+        return {"saved": True, "song": row, "license": license_type}
     except Exception as e:
-        print(f"[music] ❌ Save failed: {e}")
-        return {"saved": False, "reason": str(e)}
+        err = str(e)
+        fallback = {k: v for k, v in row_data.items() if k not in ("is_favorite", "license")}
+        if "license" in err:
+            fallback.pop("license", None)
+        if "is_favorite" in err:
+            fallback.pop("is_favorite", None)
+        try:
+            resp = sb.table("songs").insert(fallback).execute()
+            row = (resp.data or [None])[0]
+            print(f"[music] ✅ Song saved (fallback columns) user={req.user_id}")
+            return {"saved": True, "song": row, "license": license_type}
+        except Exception as e2:
+            print(f"[music] ❌ Save failed: {e2}")
+            return {"saved": False, "reason": str(e2)}
 
 
 @router.get("/history/{user_id}", summary="Songs grouped by region")
@@ -573,11 +707,74 @@ async def get_song_history(user_id: str):
         .execute()
     )
     songs = resp.data or []
+    for song in songs:
+        song["is_favorite"] = bool(song.get("is_favorite"))
     by_region: dict[str, list] = {}
     for song in songs:
         r = song.get("region", "global")
         by_region.setdefault(r, []).append(song)
     return {"songs": songs, "by_region": by_region}
+
+
+class UpdateSongRequest(BaseModel):
+    user_id:     str
+    title:       Optional[str]  = None
+    is_favorite: Optional[bool] = None
+
+
+@router.patch("/{song_id}", summary="Update song title or favorite status")
+async def update_song(song_id: str, req: UpdateSongRequest):
+    sb = _get_supabase()
+    if not sb:
+        raise HTTPException(503, "Supabase not configured")
+    updates: dict = {}
+    if req.title is not None:
+        updates["title"] = req.title.strip()
+    if req.is_favorite is not None:
+        updates["is_favorite"] = req.is_favorite
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    try:
+        resp = (
+            sb.table("songs")
+            .update(updates)
+            .eq("id", song_id)
+            .eq("user_id", req.user_id)
+            .execute()
+        )
+        if not resp.data:
+            raise HTTPException(404, "Song not found")
+        return {"updated": True, "song": resp.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[music] update failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/{song_id}", summary="Delete a song from user library")
+async def delete_song(song_id: str, user_id: str):
+    sb = _get_supabase()
+    if not sb:
+        raise HTTPException(503, "Supabase not configured")
+    if not user_id:
+        raise HTTPException(400, "user_id required")
+    try:
+        resp = (
+            sb.table("songs")
+            .delete()
+            .eq("id", song_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not resp.data:
+            raise HTTPException(404, "Song not found")
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[music] delete failed: {e}")
+        raise HTTPException(500, str(e))
 
 
 @router.get("/regions", summary="List available cultural regions")

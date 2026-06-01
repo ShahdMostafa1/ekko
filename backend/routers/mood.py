@@ -24,12 +24,28 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/mood", tags=["Layer 2 — Mood Engine"])
 
-_sentiment_pipe = None
+_whisper_model     = None
+_whisper_failed    = False
+_openrouter_audio_blocked = False
 
 AUDIO_MODELS = [
     "google/gemini-2.0-flash-001",
     "google/gemini-flash-1.5",
     "google/gemini-pro-1.5",
+]
+STT_MODELS = [
+    "qwen/qwen3-asr-flash-2026-02-10",
+    "openai/whisper-large-v3",
+    "google/chirp-3",
+    "openai/gpt-4o-mini-transcribe",
+    "openai/whisper-large-v3-turbo",
+    "mistralai/voxtral-mini-transcribe",
+    "openai/whisper-1",
+]
+STT_CHAT_MODELS = [
+    "google/gemini-2.0-flash-001",
+    "google/gemini-flash-1.5",
+    "qwen/qwen3-asr-flash-2026-02-10",
 ]
 TEXT_MODELS = [
     "google/gemini-2.0-flash-001",
@@ -67,24 +83,440 @@ def _openrouter_headers(api_key: str) -> dict:
     }
 
 
+def _audio_format_from_suffix(suffix: str) -> str:
+    ext = suffix.lower().lstrip(".")
+    return {
+        "mp4":  "m4a",
+        "m4a":  "m4a",
+        "ogg":  "ogg",
+        "webm": "webm",
+        "wav":  "wav",
+        "mp3":  "mp3",
+        "flac": "flac",
+        "aac":  "aac",
+    }.get(ext, "webm")
+
+
+def _convert_to_wav(audio_bytes: bytes, suffix: str = ".webm") -> tuple[bytes, str, str]:
+    """Normalise browser recordings to 16 kHz mono WAV for reliable STT."""
+    import io
+    import subprocess
+    import librosa
+    import soundfile as sf
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(audio_bytes)
+        tmp_in = f.name
+    tmp_out = tmp_in + ".wav"
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", tmp_in, "-ar", "16000", "-ac", "1", "-f", "wav", tmp_out],
+            capture_output=True,
+            timeout=30,
+        )
+        if proc.returncode == 0 and os.path.exists(tmp_out):
+            with open(tmp_out, "rb") as wf:
+                wav_bytes = wf.read()
+            if len(wav_bytes) > 44:
+                return wav_bytes, base64.b64encode(wav_bytes).decode("utf-8"), "wav"
+        if proc.stderr:
+            print(f"[mood:ffmpeg] {proc.stderr.decode()[:200]}")
+    except FileNotFoundError:
+        print("[mood:ffmpeg] not installed — using librosa")
+    except Exception as e:
+        print(f"[mood:ffmpeg] error: {e}")
+    finally:
+        for p in (tmp_in, tmp_out):
+            try:
+                if os.path.exists(p):
+                    os.unlink(p)
+            except Exception:
+                pass
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(audio_bytes)
+        tmp_in = f.name
+    try:
+        y, _ = librosa.load(tmp_in, sr=16000, mono=True)
+        buf = io.BytesIO()
+        sf.write(buf, y, 16000, format="WAV", subtype="PCM_16")
+        wav_bytes = buf.getvalue()
+        return wav_bytes, base64.b64encode(wav_bytes).decode("utf-8"), "wav"
+    except Exception as e:
+        print(f"[mood:stt] wav conversion failed, using raw audio: {e}")
+        raw = audio_bytes
+        return raw, base64.b64encode(raw).decode("utf-8"), _audio_format_from_suffix(suffix)
+    finally:
+        try:
+            os.unlink(tmp_in)
+        except Exception:
+            pass
+
+
+def _parse_stt_response(data: dict) -> str:
+    """Normalise transcription text from various provider response shapes."""
+    for key in ("text", "transcript", "transcription"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    if isinstance(data.get("choices"), list) and data["choices"]:
+        msg = data["choices"][0].get("message", {})
+        content = msg.get("content", "")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
+
+def _transcribe_local_whisper(wav_bytes: bytes) -> dict | None:
+    """Free on-device Whisper — no API key, works offline after first model download."""
+    global _whisper_model, _whisper_failed
+    if _whisper_failed:
+        return None
+    try:
+        if _whisper_model is None:
+            from faster_whisper import WhisperModel
+            print("[mood:whisper] loading local model (first run downloads ~150 MB)...")
+            _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+    except Exception as e:
+        print(f"[mood:whisper] unavailable: {e}")
+        _whisper_failed = True
+        return None
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(wav_bytes)
+        path = f.name
+    try:
+        segments, info = _whisper_model.transcribe(
+            path, beam_size=5, vad_filter=True, task="transcribe",
+        )
+        text = " ".join(seg.text.strip() for seg in segments).strip()
+        if text:
+            lang = getattr(info, "language", None) or "unknown"
+            print(f"[mood:whisper] lang={lang} transcript='{text}'")
+            return {
+                "transcript": text,
+                "model":      "faster-whisper-base",
+                "source":     "local_whisper",
+                "language":   lang,
+            }
+    except Exception as e:
+        print(f"[mood:whisper] transcribe failed: {e}")
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+    return None
+
+
+def _transcribe_groq(wav_bytes: bytes) -> dict | None:
+    """Groq free-tier Whisper — set GROQ_API_KEY (free at console.groq.com)."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+    try:
+        print("[mood:stt:groq] trying whisper-large-v3")
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+            data={"model": "whisper-large-v3", "response_format": "json", "temperature": "0"},
+            timeout=60.0,
+        )
+        if response.status_code >= 400:
+            print(f"[mood:stt:groq] HTTP {response.status_code}: {response.text[:400]}")
+            return None
+        text = _parse_stt_response(response.json())
+        if text:
+            print(f"[mood:stt:groq] transcript='{text}'")
+            return {"transcript": text, "model": "whisper-large-v3", "source": "groq_whisper"}
+    except Exception as e:
+        print(f"[mood:stt:groq] failed: {e}")
+    return None
+
+
+def _transcribe_openrouter_stt(audio_b64: str, audio_format: str) -> dict | None:
+    """Dedicated /audio/transcriptions endpoint — requires OpenRouter audio credits ($0.50+)."""
+    global _openrouter_audio_blocked
+    if _openrouter_audio_blocked:
+        return None
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        print("[mood:stt] No OPENROUTER_API_KEY")
+        return None
+
+    for model in STT_MODELS:
+        try:
+            print(f"[mood:stt] trying model={model} format={audio_format}")
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/audio/transcriptions",
+                headers=_openrouter_headers(api_key),
+                json={
+                    "model":       model,
+                    "input_audio": {"data": audio_b64, "format": audio_format},
+                    "temperature": 0,
+                },
+                timeout=60.0,
+            )
+            if response.status_code >= 400:
+                print(f"[mood:stt] {model} HTTP {response.status_code}: {response.text[:400]}")
+                if response.status_code == 402:
+                    _openrouter_audio_blocked = True
+                    print("[mood:stt] OpenRouter audio blocked (402) — skipping paid audio for this session")
+                    return None
+                continue
+            data = response.json()
+            text = _parse_stt_response(data)
+            if text:
+                print(f"[mood:stt] model={model} transcript='{text}'")
+                return {"transcript": text, "model": model, "source": "openrouter_stt"}
+        except Exception as e:
+            print(f"[mood:stt] {model} failed: {e}")
+
+    return None
+
+
+def _transcribe_via_chat(audio_b64: str, audio_format: str) -> dict | None:
+    """Multimodal chat fallback — requires OpenRouter audio credits."""
+    global _openrouter_audio_blocked
+    if _openrouter_audio_blocked:
+        return None
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+
+    prompt = """You are a professional multilingual speech-to-text transcriber.
+
+Listen to this audio and write EXACTLY what the person said.
+
+RULES:
+- Use the original language and writing system (Arabic, Devanagari, Latin, CJK, etc.)
+- Do NOT translate to English
+- Do NOT paraphrase, summarize, or explain
+- If no speech is detected, respond with exactly: [silence]
+
+Return ONLY the spoken words as plain text. No JSON, no markdown, no quotes."""
+
+    for model in STT_CHAT_MODELS:
+        try:
+            print(f"[mood:stt:chat] trying model={model}")
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=_openrouter_headers(api_key),
+                json={
+                    "model": model,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": audio_b64, "format": audio_format},
+                            },
+                        ],
+                    }],
+                    "max_tokens":  400,
+                    "temperature": 0,
+                },
+                timeout=60.0,
+            )
+            if response.status_code >= 400:
+                print(f"[mood:stt:chat] {model} HTTP {response.status_code}: {response.text[:400]}")
+                if response.status_code == 402:
+                    _openrouter_audio_blocked = True
+                    return None
+                continue
+            text = response.json()["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"):
+                text = text.split("```")[1].strip()
+                if text.startswith("text"):
+                    text = text[4:].strip()
+            if text.startswith('"') and text.endswith('"'):
+                text = text[1:-1].strip()
+            if text and text != "[silence]" and len(text) > 1:
+                print(f"[mood:stt:chat] model={model} transcript='{text}'")
+                return {"transcript": text, "model": model, "source": "chat_stt"}
+        except Exception as e:
+            print(f"[mood:stt:chat] {model} failed: {e}")
+
+    return None
+
+
+def _transcribe_openai_direct(wav_bytes: bytes) -> dict | None:
+    """Optional direct OpenAI Whisper if OPENAI_API_KEY is set."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    for model in ("whisper-1",):
+        try:
+            print(f"[mood:stt:openai] trying model={model}")
+            response = httpx.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+                data={"model": model, "response_format": "json", "temperature": "0"},
+                timeout=60.0,
+            )
+            if response.status_code >= 400:
+                print(f"[mood:stt:openai] HTTP {response.status_code}: {response.text[:400]}")
+                continue
+            text = _parse_stt_response(response.json())
+            if text:
+                print(f"[mood:stt:openai] transcript='{text}'")
+                return {"transcript": text, "model": model, "source": "openai_whisper"}
+        except Exception as e:
+            print(f"[mood:stt:openai] failed: {e}")
+
+    return None
+
+
+def _transcribe_audio(wav_bytes: bytes, audio_b64: str, audio_format: str) -> dict | None:
+    """Try providers until one returns text. OpenRouter first when key is set."""
+    has_openrouter = bool(os.getenv("OPENROUTER_API_KEY")) and not _openrouter_audio_blocked
+
+    cloud = (
+        (_transcribe_openrouter_stt, (audio_b64, audio_format)),
+        (_transcribe_via_chat,       (audio_b64, audio_format)),
+    )
+    local = (
+        (_transcribe_local_whisper, (wav_bytes,)),
+        (_transcribe_groq,          (wav_bytes,)),
+        (_transcribe_openai_direct, (wav_bytes,)),
+    )
+    order = cloud + local if has_openrouter else local + cloud
+
+    for fn, args in order:
+        result = fn(*args)
+        if result:
+            return result
+
+    print("[mood:stt] all STT providers failed")
+    return None
+
+
+def _resolve_language(
+    transcript:    str,
+    stt_result:    dict | None,
+    language_hint: str,
+) -> str:
+    if stt_result:
+        lang = (stt_result.get("language") or "").lower().split("-")[0]
+        if len(lang) == 2 and lang != "unknown":
+            return lang
+    if language_hint:
+        lang = language_hint.lower().split("-")[0]
+        if len(lang) == 2:
+            return lang
+    if transcript.strip():
+        detected = _detect_language_from_text(transcript)
+        if detected != "unknown":
+            return detected
+    return "unknown"
+
+
+def _mood_from_transcript(
+    transcript:    str,
+    stt_source:    str,
+    language_hint: str,
+    stt_result:    dict | None,
+    region:        str,
+    feats:         dict,
+) -> dict:
+    """Mood detection from text only — avoids paid OpenRouter audio."""
+    detected_lang = _resolve_language(transcript, stt_result, language_hint)
+    ac_arousal    = min(feats.get("energy", 0.005) * 20, 1.0)
+
+    text_result = _gemini_text_agent(text=transcript, region=region)
+    if text_result:
+        return {
+            "transcript":   transcript,
+            "language":     detected_lang,
+            "top_emotion":  text_result["top_emotion"],
+            "confidence":   round(text_result["confidence"], 3),
+            "valence":      normalise(text_result["valence"]),
+            "arousal":      round(0.6 * text_result.get("arousal", 0.5) + 0.4 * ac_arousal, 3),
+            "reasoning":    text_result.get("reasoning", ""),
+            "method":       f"transcript_{stt_source}",
+            "all_emotions": text_result.get("all_emotions", []),
+        }
+
+    fb = _classifier_emotion(transcript, feats)
+    return {
+        "transcript":   transcript,
+        "language":     detected_lang,
+        "top_emotion":  fb["top_emotion"],
+        "confidence":   fb["confidence"],
+        "valence":      normalise(fb["valence"]),
+        "arousal":      fb["arousal"],
+        "reasoning":    fb.get("reasoning") or f'You said: "{transcript}"',
+        "method":       f"transcript_hf_{stt_source}",
+        "all_emotions": fb["all_emotions"],
+    }
+
+
+def _detect_language_from_text(text: str) -> str:
+    """Lightweight language ID for display — ISO 639-1."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key or not text.strip():
+        return "unknown"
+
+    prompt = f"""Identify the language of this text. Return ONLY a JSON object:
+{{"language": "<ISO 639-1 code, e.g. en, ar, ne, hi, fr>"}}
+
+Text: "{text[:500]}\""""
+
+    try:
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=_openrouter_headers(api_key),
+            json={
+                "model":       "google/gemini-2.0-flash-001",
+                "messages":    [{"role": "user", "content": prompt}],
+                "max_tokens":  30,
+                "temperature": 0,
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        raw = response.json()["choices"][0]["message"]["content"].strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        result = json.loads(raw.strip())
+        lang = (result.get("language") or "unknown").lower().split("-")[0]
+        return lang if len(lang) == 2 else "unknown"
+    except Exception as e:
+        print(f"[mood:lang] detection failed: {e}")
+        return "unknown"
+
+
 # ── Gemini Audio Agent ────────────────────────────────────────────────────────
 def _gemini_audio_agent(
     audio_b64: str,
-    mime_type: str,
+    audio_format: str,
     acoustic:  dict,
     region:    str = "",
+    transcript: str = "",
 ) -> dict | None:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("[mood:audio] No OPENROUTER_API_KEY")
         return None
 
-    prompt = f"""You are an expert emotion detection agent for Ekko, a music mood app for teenagers.
-Listen to this audio clip carefully. The speaker may use Arabic (including Egyptian عامية, Levantine, Gulf dialect), English, French, or any other language.
+    transcript_block = (
+        f'\nVERIFIED TRANSCRIPT (use exactly as written — do NOT translate or rephrase):\n"{transcript}"\n'
+        if transcript.strip() else ""
+    )
 
+    prompt = f"""You are an expert emotion detection agent for Ekko, a music mood app for teenagers.
+Listen to this audio clip carefully. The speaker may use ANY language or dialect
+(Arabic عامية, Nepali, Hindi, French, Spanish, English, etc.).
+{transcript_block}
 YOUR TASKS:
-1. Transcribe exactly what was said (keep original language — do NOT translate)
-2. Identify the language code (ar, en, fr, etc.)
+1. {"Use the VERIFIED TRANSCRIPT above verbatim in your JSON" if transcript.strip() else "Transcribe exactly what was said in the ORIGINAL script and language — do NOT translate"}
+2. Identify the language code (ar, en, ne, hi, fr, etc.)
 3. Detect the emotional state using BOTH the words AND tone of voice
 
 ACOUSTIC SIGNAL DATA:
@@ -153,13 +585,14 @@ Return ONLY valid JSON, no markdown, no preamble, no explanation:
                         "role": "user",
                         "content": [
                             {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{audio_b64}"
-                                }
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data":   audio_b64,
+                                    "format": audio_format,
+                                },
                             },
-                            {"type": "text", "text": prompt}
-                        ]
+                            {"type": "text", "text": prompt},
+                        ],
                     }],
                     "max_tokens":  700,
                     "temperature": 0.1,
@@ -202,9 +635,10 @@ def _gemini_text_agent(
         return None
 
     prompt = f"""You are an expert emotion detection agent for Ekko, a music mood app for teenagers.
-Accurately detect the emotional state from what a teenager wrote. They may write in ANY language including Arabic dialects.
+Accurately detect the emotional state from what a teenager wrote or said. They may write in ANY language
+including Arabic dialects, Nepali, Hindi, Tamil, French, Spanish, English, etc.
 
-WHAT THEY WROTE:
+WHAT THEY WROTE (original language — do NOT translate):
 "{text}"
 
 USER REGION: {region or 'unknown'}
@@ -481,9 +915,11 @@ class TextMoodRequest(BaseModel):
 # ── Voice endpoint ────────────────────────────────────────────────────────────
 @router.post("/detect", summary="Detect mood from audio — Gemini audio agent + text blend")
 async def detect_mood(
-    audio:   UploadFile = File(...),
-    user_id: str = Form(default=""),
-    region:  str = Form(default=""),
+    audio:           UploadFile = File(...),
+    user_id:         str = Form(default=""),
+    region:          str = Form(default=""),
+    transcript_hint: str = Form(default=""),
+    language_hint:   str = Form(default=""),
 ):
     audio_bytes = await audio.read()
     filename  = audio.filename or "mood.webm"
@@ -496,22 +932,52 @@ async def detect_mood(
 
     print(f"[mood] received audio: {filename} ({len(audio_bytes)} bytes) mime={mime_type}")
 
+    if len(audio_bytes) < 1000:
+        print(f"[mood] warning: very short audio ({len(audio_bytes)} bytes)")
+
     feats = extract_acoustic_features(audio_bytes, suffix=suffix)
     print(f"[mood] acoustic: {feats}")
 
-    audio_b64    = base64.b64encode(audio_bytes).decode("utf-8")
-    audio_result = _gemini_audio_agent(
-        audio_b64 = audio_b64,
-        mime_type = mime_type,
-        acoustic  = feats,
-        region    = region,
-    )
+    wav_bytes, audio_b64, audio_format = _convert_to_wav(audio_bytes, suffix=suffix)
 
-    final = None
+    stt_result = _transcribe_audio(wav_bytes, audio_b64, audio_format)
+    stt_transcript = stt_result.get("transcript", "") if stt_result else ""
+
+    if not stt_transcript and transcript_hint.strip():
+        stt_transcript = transcript_hint.strip()
+        print(f"[mood] using browser speech hint: '{stt_transcript}'")
+
+    if stt_transcript:
+        stt_source = (stt_result or {}).get("source", "browser_hint")
+        print(f"[mood] final transcript: '{stt_transcript}' (source={stt_source})")
+        result = _mood_from_transcript(
+            stt_transcript, stt_source, language_hint, stt_result, region, feats,
+        )
+        _persist_mood_log(
+            user_id, result["valence"], result["arousal"], result["top_emotion"],
+            result["transcript"], result["confidence"], feats,
+            region, result["language"], result["reasoning"],
+        )
+        return {**result, "acoustic": feats}
+
+    # No transcript — try paid audio mood only if enabled (requires OpenRouter audio credits)
+    audio_result = None
+    if not _openrouter_audio_blocked and os.getenv("OPENROUTER_AUDIO_ENABLED", "").lower() == "true":
+        audio_result = _gemini_audio_agent(
+            audio_b64    = audio_b64,
+            audio_format = audio_format,
+            acoustic     = feats,
+            region       = region,
+            transcript   = "",
+        )
 
     if audio_result:
         transcript    = audio_result.get("transcript", "")
-        detected_lang = audio_result.get("language", "unknown")
+        detected_lang = (audio_result.get("language") or language_hint or "unknown").lower().split("-")[0]
+        if detected_lang in ("unknown", "") or len(detected_lang) != 2:
+            detected_lang = _detect_language_from_text(transcript) if transcript else (
+                language_hint.lower().split("-")[0] if language_hint else "unknown"
+            )
         audio_emotion = audio_result.get("top_emotion", "")
 
         text_result = None
@@ -529,40 +995,41 @@ async def detect_mood(
             all_emotions  = blended["all_emotions"]
             transcript    = blended.get("transcript", transcript)
             detected_lang = blended.get("language", detected_lang)
+            if detected_lang in ("unknown", "") or len(str(detected_lang)) != 2:
+                detected_lang = _detect_language_from_text(transcript) if transcript else "unknown"
             method        = blended["method"]
             print(f"[mood] blend result: {method} → emotion={top_emotion} confidence={confidence}")
+        elif audio_emotion in UNKNOWN_EMOTIONS:
+            print("[mood] audio UNKNOWN + text failed → HF fallback")
+            fb           = _classifier_emotion(transcript or "I feel something", feats)
+            top_emotion  = fb["top_emotion"]
+            raw_valence  = fb["valence"]
+            arousal      = fb["arousal"]
+            confidence   = fb["confidence"]
+            reasoning    = fb["reasoning"]
+            all_emotions = fb["all_emotions"]
+            method       = "hf_fallback"
         else:
-            if audio_emotion in UNKNOWN_EMOTIONS:
-                print("[mood] audio UNKNOWN + text failed → HF fallback")
-                fb           = _classifier_emotion("I feel something", feats)
-                top_emotion  = fb["top_emotion"]
-                raw_valence  = fb["valence"]
-                arousal      = fb["arousal"]
-                confidence   = fb["confidence"]
-                reasoning    = fb["reasoning"]
-                all_emotions = fb["all_emotions"]
-                method       = "hf_fallback"
-            else:
-                top_emotion  = audio_emotion
-                raw_valence  = audio_result["valence"]
-                arousal      = round(audio_result["arousal"], 3)
-                confidence   = round(audio_result["confidence"], 3)
-                reasoning    = audio_result.get("reasoning", "")
-                all_emotions = audio_result.get("all_emotions", [])
-                method       = "gemini_audio_only"
+            top_emotion  = audio_emotion
+            raw_valence  = audio_result["valence"]
+            arousal      = round(audio_result["arousal"], 3)
+            confidence   = round(audio_result["confidence"], 3)
+            reasoning    = audio_result.get("reasoning", "")
+            all_emotions = audio_result.get("all_emotions", [])
+            method       = "gemini_audio_only"
 
     else:
-        print("[mood] Gemini audio failed — using HF fallback")
+        print("[mood] no transcript — acoustic-only fallback (install faster-whisper or add GROQ_API_KEY)")
         fb            = _classifier_emotion("I feel something", feats)
         transcript    = ""
-        detected_lang = "unknown"
+        detected_lang = language_hint.lower().split("-")[0] if language_hint else "unknown"
         top_emotion   = fb["top_emotion"]
         raw_valence   = fb["valence"]
         arousal       = fb["arousal"]
         confidence    = fb["confidence"]
-        reasoning     = fb["reasoning"]
+        reasoning     = "Could not transcribe speech. Try speaking for 2–3 seconds, or use the Text tab."
         all_emotions  = fb["all_emotions"]
-        method        = "hf_fallback"
+        method        = "acoustic_only"
 
     valence = normalise(raw_valence)
 
@@ -652,3 +1119,20 @@ async def get_mood_history(user_id: str):
         .execute()
     )
     return {"logs": resp.data}
+
+
+@router.delete("/log/{log_id}", summary="Delete a mood log entry")
+async def delete_mood_log(log_id: str):
+    sb = _get_supabase()
+    if not sb:
+        raise HTTPException(503, "Supabase not configured")
+    try:
+        resp = sb.table("mood_logs").delete().eq("id", log_id).execute()
+        if not resp.data:
+            raise HTTPException(404, "Mood log not found")
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[mood] delete failed: {e}")
+        raise HTTPException(500, str(e))
