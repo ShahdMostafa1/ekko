@@ -1,5 +1,14 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
+import { proxiedAudioUrl } from '../utils/audioProxy';
+import {
+  applyAudioSource,
+  fetchBlobAudioUrl,
+  isAndroid,
+  mobileAudioElementProps,
+  playFromUserGesture,
+  revokeBlobAudioUrl,
+} from '../utils/mobileAudio';
 
 const POLL_INTERVAL_FREE = 4000;
 const POLL_INTERVAL_PRIORITY = 2500;
@@ -9,6 +18,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const audioRef     = useRef(null);
   const pollRef      = useRef(null);
   const pollStartRef = useRef(null);
+  const retryRef     = useRef(0);
 
   const [audioUrl, setAudioUrl]         = useState(params?.audio_url || null);
   const [taskId]                        = useState(params?.task_id || null);
@@ -33,6 +43,31 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     ? POLL_INTERVAL_PRIORITY
     : POLL_INTERVAL_FREE;
   const isPriority   = pollInterval === POLL_INTERVAL_PRIORITY;
+  const playbackUrl  = useMemo(() => proxiedAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
+  const [srcOverride, setSrcOverride] = useState(null);
+  const effectiveSrc = srcOverride || playbackUrl;
+
+  useEffect(() => () => revokeBlobAudioUrl(), []);
+
+  useEffect(() => {
+    setSrcOverride(null);
+    revokeBlobAudioUrl();
+    retryRef.current = 0;
+    if (!playbackUrl) return;
+    setAudioLoading(true);
+    setAudioError(null);
+    const el = audioRef.current;
+    if (el) applyAudioSource(el, playbackUrl);
+  }, [playbackUrl]);
+
+  useEffect(() => {
+    if (!srcOverride) return;
+    const el = audioRef.current;
+    if (el) {
+      setAudioLoading(true);
+      applyAudioSource(el, srcOverride);
+    }
+  }, [srcOverride]);
 
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
@@ -110,29 +145,46 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     setPlaying(false); setProgress(0);
     if (audioRef.current) audioRef.current.currentTime = 0;
   };
-  const onError = (e) => {
+  const onError = async () => {
     setAudioLoading(false);
     const el = audioRef.current;
-    if (el && audioUrl) {
-      setTimeout(() => {
-        el.load();
-        el.play()
-          .then(() => { setAudioError(null); setPlaying(true); })
-          .catch(() => setAudioError("Could not load audio. Try opening in a new tab."));
-      }, 1000);
-    } else {
+    if (!el || !effectiveSrc) {
       setAudioError("Could not load audio. Try opening in a new tab.");
+      return;
     }
+    retryRef.current += 1;
+    if (retryRef.current === 1) {
+      setTimeout(() => el.load(), 400);
+      return;
+    }
+    if (isAndroid() && playbackUrl && !srcOverride && retryRef.current === 2) {
+      const blobUrl = await fetchBlobAudioUrl(playbackUrl);
+      if (blobUrl) {
+        setSrcOverride(blobUrl);
+        setAudioError(null);
+        return;
+      }
+    }
+    setAudioError("Could not load audio. Try opening in a new tab.");
   };
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const el = audioRef.current;
     if (!el) return;
-    if (playing) { el.pause(); setPlaying(false); }
-    else {
-      el.play()
-        .then(() => setPlaying(true))
-        .catch(() => setAudioError("Tap play to start."));
+    if (playing) {
+      el.pause();
+      setPlaying(false);
+      return;
+    }
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA && effectiveSrc) {
+      applyAudioSource(el, effectiveSrc);
+    }
+    const ok = await playFromUserGesture(el);
+    if (ok) {
+      setPlaying(true);
+      setAudioError(null);
+    } else {
+      setAudioError("Tap play to start.");
     }
   };
 
@@ -194,11 +246,15 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   return (
     <div className="mp-card" style={s.card}>
       <audio
-        ref={audioRef} src={audioUrl}
-        onCanPlay={onCanPlay} onError={onError}
+        ref={audioRef}
+        key={effectiveSrc}
+        src={effectiveSrc}
+        onCanPlay={onCanPlay}
+        onError={onError}
         onLoadedMetadata={onLoadedMetadata}
-        onTimeUpdate={onTimeUpdate} onEnded={onEnded}
-        preload="auto"
+        onTimeUpdate={onTimeUpdate}
+        onEnded={onEnded}
+        {...mobileAudioElementProps()}
       />
 
       {/* Header */}
@@ -258,7 +314,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       ) : audioError ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <p style={s.errorText}>{audioError}</p>
-          <a href={audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
+          <a href={playbackUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
         </div>
       ) : (
         <button style={s.playBtn} onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>

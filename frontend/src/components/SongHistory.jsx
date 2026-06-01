@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { applyHistoryLimit, canDownload } from '../utils/planUtils'
+import { proxiedAudioUrl } from '../utils/audioProxy'
+import {
+  configureMobileAudio,
+  fetchBlobAudioUrl,
+  isAndroid,
+  playFromUserGesture,
+  revokeBlobAudioUrl,
+} from '../utils/mobileAudio'
 
 const REGION_META = {
   arabic:      { emoji: '🌙', label: 'Arabic',      color: '#c9a84c' },
@@ -24,13 +32,15 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   const [sortBy, setSortBy]     = useState('newest')
   const [search, setSearch]     = useState('')
   const [expanded, setExpanded] = useState(null)
-  const [playing, setPlaying]   = useState(null)
+  const [activeSongId, setActiveSongId] = useState(null)
+  const [isPlaying, setIsPlaying]       = useState(false)
   const [playProgress, setPlayProgress] = useState({})
   const [editingId, setEditingId]     = useState(null)
   const [editTitle, setEditTitle]     = useState('')
   const [actionLoading, setActionLoading] = useState(null)
   const [actionError, setActionError]     = useState('')
   const audioRef                = useRef(null)
+  const activeSongRef           = useRef(null)
   const rafRef                  = useRef(null)
 
   const API = import.meta.env.VITE_API_URL
@@ -63,11 +73,32 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   }, [userId])
 
   useEffect(() => () => {
+    stopProgress()
     audioRef.current?.pause()
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    audioRef.current = null
+    revokeBlobAudioUrl()
   }, [])
 
+  const stopProgress = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+
+  const clearActivePlayback = (songId) => {
+    stopProgress()
+    audioRef.current?.pause()
+    audioRef.current = null
+    activeSongRef.current = null
+    revokeBlobAudioUrl()
+    setActiveSongId(null)
+    setIsPlaying(false)
+    if (songId != null) {
+      setPlayProgress(prev => ({ ...prev, [String(songId)]: 0 }))
+    }
+  }
+
   const trackProgress = (id) => {
+    stopProgress()
     const tick = () => {
       const el = audioRef.current
       if (!el || el.paused) return
@@ -78,23 +109,70 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     rafRef.current = requestAnimationFrame(tick)
   }
 
-  const togglePlay = (song) => {
-    if (playing === song.id) {
-      audioRef.current?.pause()
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
-      setPlaying(null)
+  const togglePlay = async (song) => {
+    const songId = String(song.id)
+    const url = proxiedAudioUrl(song.audio_url, song.task_id)
+    if (!url) return
+
+    if (activeSongRef.current === songId && audioRef.current) {
+      if (!audioRef.current.paused) {
+        clearActivePlayback(songId)
+        return
+      }
+      const resumed = await playFromUserGesture(audioRef.current)
+      if (!resumed) clearActivePlayback(songId)
       return
     }
-    if (audioRef.current) { audioRef.current.pause(); if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-    audioRef.current = new Audio(song.audio_url)
-    audioRef.current.play().catch(() => {})
-    audioRef.current.onended = () => {
-      setPlaying(null)
-      setPlayProgress(prev => ({ ...prev, [song.id]: 0 }))
+
+    if (audioRef.current) clearActivePlayback(activeSongRef.current)
+
+    const audio = configureMobileAudio(new Audio(), url)
+    audioRef.current = audio
+    activeSongRef.current = songId
+    setActiveSongId(songId)
+    setPlayProgress(prev => ({ ...prev, [songId]: 0 }))
+
+    audio.onended = () => clearActivePlayback(songId)
+    audio.onpause = () => {
+      stopProgress()
+      setIsPlaying(false)
     }
-    setPlaying(song.id)
-    setPlayProgress(prev => ({ ...prev, [song.id]: 0 }))
-    trackProgress(song.id)
+    audio.onplay = () => {
+      setIsPlaying(true)
+      trackProgress(songId)
+    }
+    audio.onerror = async () => {
+      if (isAndroid()) {
+        const blobUrl = await fetchBlobAudioUrl(url)
+        if (blobUrl) {
+          configureMobileAudio(audio, blobUrl)
+          if (await playFromUserGesture(audio)) {
+            trackProgress(songId)
+            return
+          }
+        }
+      }
+      clearActivePlayback(songId)
+    }
+
+    if (await playFromUserGesture(audio)) {
+      setIsPlaying(true)
+      trackProgress(songId)
+      return
+    }
+
+    if (isAndroid()) {
+      const blobUrl = await fetchBlobAudioUrl(url)
+      if (blobUrl) {
+        configureMobileAudio(audio, blobUrl)
+        if (await playFromUserGesture(audio)) {
+          setIsPlaying(true)
+          trackProgress(songId)
+          return
+        }
+      }
+    }
+    clearActivePlayback(songId)
   }
 
   const patchSong = async (songId, body) => {
@@ -145,9 +223,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         method: 'DELETE',
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      if (playing === song.id) {
-        audioRef.current?.pause()
-        setPlaying(null)
+      if (String(activeSongId) === String(song.id)) {
+        clearActivePlayback(song.id)
       }
       setSongs(prev => prev.filter(s => s.id !== song.id))
       setByRegion(prev => {
@@ -224,9 +301,10 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   const SongCard = ({ song }) => {
     const meta    = REGION_META[song.region] || REGION_META.global
     const isOpen  = expanded === song.id
-    const isPlay  = playing  === song.id
-    const isBusy  = actionLoading === song.id
-    const prog    = playProgress[song.id] || 0
+    const isActive = String(activeSongId) === String(song.id)
+    const isPlay   = isActive && isPlaying
+    const isBusy   = actionLoading === song.id
+    const prog     = playProgress[String(song.id)] || 0
     const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric',
     })
@@ -304,9 +382,9 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
                   </button>
                 )}
                 <button
-                  className={`sh-play ${isPlay ? 'playing' : ''}`}
+                  className={`sh-play ${isActive ? 'playing' : ''}`}
                   onClick={e => { e.stopPropagation(); togglePlay(song) }}
-                  aria-label={isPlay ? 'Pause' : 'Play'}
+                  aria-label={isPlay ? 'Pause' : isActive ? 'Play' : 'Play'}
                 >
                   {isPlay ? '⏸' : '▶'}
                 </button>
@@ -319,7 +397,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         </div>
 
         {/* ── Progress bar shown when playing ── */}
-        {isPlay && (
+        {isActive && (
           <div className="sh-play-progress-wrap">
             <div className="sh-play-progress-fill" style={{ width: `${prog * 100}%`, background: meta.color }} />
           </div>
