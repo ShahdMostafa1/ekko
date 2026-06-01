@@ -10,7 +10,10 @@ from __future__ import annotations
 import os
 import httpx
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -28,6 +31,17 @@ OPENROUTER_MODELS = [
 
 MOCK_MODE      = False
 MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0d42b.mp3"
+
+_ALLOWED_AUDIO_HOST_SUFFIXES = (
+    "sonauto.ai",
+    "amazonaws.com",
+    "cloudfront.net",
+    "pixabay.com",
+    "digitaloceanspaces.com",
+    "googleusercontent.com",
+)
+
+_task_audio_cache: dict[str, str] = {}
 
 # ── Plan limits (keep in sync with frontend/src/utils/planUtils.js) ─────────
 PLAN_DAILY_LIMITS = {
@@ -230,6 +244,97 @@ def _sonauto_headers() -> dict:
     if not key:
         raise HTTPException(500, "SONAUTO_API_KEY not set in .env")
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _extract_audio_url(data: dict) -> str | None:
+    return (
+        data.get("audio_url") or data.get("output_url") or data.get("url")
+        or (data.get("song_paths") or [None])[0]
+    )
+
+
+def _is_allowed_audio_url(url: str) -> bool:
+    try:
+        host = urlparse(url).netloc.lower()
+        if not host.startswith("http"):
+            host = urlparse(f"https://{url}").netloc.lower()
+        return any(host == suffix or host.endswith(f".{suffix}") for suffix in _ALLOWED_AUDIO_HOST_SUFFIXES)
+    except Exception:
+        return False
+
+
+def _resolve_task_audio_url(task_id: str) -> str:
+    if task_id == "mock":
+        return MOCK_AUDIO_URL
+    if task_id in _task_audio_cache:
+        return _task_audio_cache[task_id]
+
+    res = httpx.get(f"{SONAUTO_STATUS}/{task_id}", headers=_sonauto_headers(), timeout=15)
+    res.raise_for_status()
+    data = res.json()
+    state = (data.get("state") or data.get("status") or "UNKNOWN").upper()
+    if state not in ("SUCCESS", "COMPLETED", "COMPLETE", "DONE"):
+        raise HTTPException(409, f"Audio not ready (state={state})")
+
+    audio_url = _extract_audio_url(data)
+    if not audio_url:
+        raise HTTPException(404, "No audio URL for this task")
+    if not _is_allowed_audio_url(audio_url):
+        print(f"[music] stream allowlist miss host={urlparse(audio_url).netloc}")
+
+    _task_audio_cache[task_id] = audio_url
+    return audio_url
+
+
+def _guess_audio_content_type(url: str, upstream: str | None) -> str:
+    raw = (upstream or "").split(";")[0].strip().lower()
+    if raw and ("audio" in raw or raw in ("application/octet-stream", "binary/octet-stream")):
+        return raw.split(";")[0].strip() or "audio/mpeg"
+    path = urlparse(url).path.lower()
+    if path.endswith(".wav"):
+        return "audio/wav"
+    if path.endswith(".ogg"):
+        return "audio/ogg"
+    if path.endswith(".m4a") or path.endswith(".mp4"):
+        return "audio/mp4"
+    return "audio/mpeg"
+
+
+def _proxy_audio_response(url: str, range_header: str | None = None) -> Response:
+    if not _is_allowed_audio_url(url):
+        raise HTTPException(400, "Audio URL host not allowed")
+    upstream_headers = {"Range": range_header} if range_header else None
+    try:
+        res = httpx.get(url, timeout=90, follow_redirects=True, headers=upstream_headers)
+        res.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"Upstream audio error {e.response.status_code}") from e
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch audio: {e}") from e
+
+    content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
+
+    headers = {
+        "Cache-Control": "public, max-age=3600",
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": "inline",
+    }
+    for name in ("Content-Range", "Content-Length"):
+        if name in res.headers:
+            headers[name] = res.headers[name]
+    if "Content-Length" not in headers and res.content:
+        headers["Content-Length"] = str(len(res.content))
+
+    status = res.status_code
+    if status not in (200, 206):
+        status = 206 if range_header and res.status_code < 400 else 200
+
+    return Response(
+        content=res.content,
+        status_code=status,
+        media_type=content_type,
+        headers=headers,
+    )
 
 
 def _openrouter_headers() -> dict:
@@ -631,14 +736,31 @@ async def get_status(task_id: str):
     print(f"[music] Poll task={task_id} state={state}")
 
     if state in ("SUCCESS", "COMPLETED", "COMPLETE", "DONE"):
-        audio_url = (
-            data.get("audio_url") or data.get("output_url") or data.get("url")
-            or (data.get("song_paths") or [None])[0]
-        )
-        return {"status": "SUCCESS", "audio_url": audio_url}
+        audio_url = _extract_audio_url(data)
+        return {
+            "status": "SUCCESS",
+            "audio_url": audio_url,
+            "play_url": f"/music/stream/{task_id}",
+        }
     if state in ("FAILURE", "FAILED", "ERROR"):
         return {"status": "FAILED", "error": data.get("error_message", "Unknown error")}
     return {"status": "GENERATING"}
+
+
+@router.get("/stream/{task_id}", summary="Proxy audio for in-app playback (CORS-safe)")
+async def stream_audio_by_task(task_id: str, request: Request):
+    """Stream Sonauto audio through Ekko API so mobile browsers can play it."""
+    try:
+        url = _resolve_task_audio_url(task_id)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"Sonauto status error {e.response.status_code}") from e
+    return _proxy_audio_response(url, request.headers.get("range"))
+
+
+@router.get("/stream", summary="Proxy audio by URL (saved songs)")
+async def stream_audio_by_url(request: Request, url: str = Query(..., min_length=8)):
+    """Stream a previously saved audio URL through Ekko (allowlisted hosts only)."""
+    return _proxy_audio_response(url, request.headers.get("range"))
 
 
 @router.get("/usage/{user_id}", summary="Daily generation usage for plan limits")
