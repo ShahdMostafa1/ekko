@@ -18,11 +18,23 @@ _local_surveys: dict[str, dict] = {}
 
 def _get_supabase():
     url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_KEY")
+    )
     if not url or not key:
         return None
     from supabase import create_client
     return create_client(url, key)
+
+
+def list_local_surveys() -> list[dict]:
+    """In-memory fallback when DB table is missing (lost on server restart)."""
+    rows: list[dict] = []
+    for phases in _local_surveys.values():
+        rows.extend(phases.values())
+    return rows
 
 
 class SurveySubmit(BaseModel):
@@ -131,9 +143,20 @@ async def submit_survey(body: SurveySubmit):
             return {"saved": True, "survey": saved}
         except Exception as e:
             err = str(e)
-            if "study_surveys" in err.lower() or "does not exist" in err.lower():
+            missing = (
+                "study_surveys" in err.lower()
+                or "does not exist" in err.lower()
+                or "schema cache" in err.lower()
+                or "column" in err.lower()
+            )
+            if missing:
                 _local_surveys.setdefault(body.user_id, {})[body.phase] = row
-                return {"saved": True, "survey": row, "storage": "local"}
+                return {
+                    "saved": True,
+                    "survey": row,
+                    "storage": "local",
+                    "warning": "Survey saved in server memory only. Run Supabase migrations and set SUPABASE_SERVICE_ROLE_KEY on Render.",
+                }
             raise HTTPException(status_code=500, detail=err)
 
     _local_surveys.setdefault(body.user_id, {})[body.phase] = row

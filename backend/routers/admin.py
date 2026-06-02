@@ -10,6 +10,8 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException
 
+from routers.survey import list_local_surveys
+
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "EkkoAdmin2026!")
@@ -22,7 +24,11 @@ def _require_admin(x_admin_secret: str | None) -> None:
 
 def _get_supabase_admin():
     url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+    key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_KEY")
+    )
     if not url or not key:
         return None
     from supabase import create_client
@@ -90,7 +96,11 @@ async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")
     _require_admin(x_admin_secret)
     sb = _get_supabase_admin()
     if not sb:
-        return {"surveys": []}
+        local = list_local_surveys()
+        return {
+            "surveys": local,
+            "warning": "SUPABASE_URL or service key missing on backend — only in-memory surveys (if any).",
+        }
     try:
         resp = (
             sb.table("study_surveys")
@@ -98,9 +108,16 @@ async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")
             .order("created_at", desc=True)
             .execute()
         )
-        surveys = resp.data or []
+        surveys = list(resp.data or [])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err = str(e)
+        if "study_surveys" in err.lower() or "does not exist" in err.lower():
+            local = list_local_surveys()
+            return {
+                "surveys": local,
+                "warning": "study_surveys table missing — run add_study_surveys.sql and extend_study_surveys.sql in Supabase.",
+            }
+        raise HTTPException(status_code=500, detail=err)
 
     emails: dict[str, str] = {}
     try:
@@ -110,7 +127,19 @@ async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")
     except Exception:
         pass
 
+    seen = {(r.get("user_id"), r.get("phase")) for r in surveys}
+    for row in list_local_surveys():
+        key = (row.get("user_id"), row.get("phase"))
+        if key not in seen:
+            surveys.append(row)
+            seen.add(key)
+
     for row in surveys:
         row["email"] = emails.get(row.get("user_id"), "")
 
-    return {"surveys": surveys}
+    out: dict = {"surveys": surveys}
+    if not surveys:
+        out["warning"] = (
+            "No rows in study_surveys yet. Confirm migrations ran and testers completed pre/post surveys."
+        )
+    return out

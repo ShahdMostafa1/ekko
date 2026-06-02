@@ -175,6 +175,7 @@ export default function AdminDashboard({ onExit }) {
   const [rewards, setRewards]   = useState([])
   const [xpEvents, setXpEvents] = useState([])
   const [surveys, setSurveys]   = useState([])
+  const [surveyWarning, setSurveyWarning] = useState('')
   const [surveyPhaseFilter, setSurveyPhaseFilter] = useState('all')
   const [editingSongId, setEditingSongId] = useState(null)
   const [editSongTitle, setEditSongTitle] = useState('')
@@ -192,20 +193,61 @@ export default function AdminDashboard({ onExit }) {
         supabase.from('user_rewards').select('*'),
         supabase.from('xp_events').select('*').order('created_at', { ascending: false }).limit(200),
       ])
-      setProfiles(p || [])
+      const profileRows = p || []
+      setProfiles(profileRows)
       setSongs(so || [])
       setMoods(m || [])
       setRewards(r || [])
       setXpEvents(x || [])
+
+      const emailByUser = {}
+      profileRows.forEach(row => { emailByUser[row.id] = row.email || '' })
+
+      const attachEmails = (rows) => rows.map(r => ({
+        ...r,
+        email: r.email || emailByUser[r.user_id] || '',
+      }))
+
+      let loadedSurveys = []
+      let warning = ''
+
       try {
         const sr = await fetch(`${API}/admin/surveys`, {
           headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
         })
+        const sd = await sr.json().catch(() => ({}))
         if (sr.ok) {
-          const sd = await sr.json()
-          setSurveys(sd.surveys || [])
+          loadedSurveys = sd.surveys || []
+          if (sd.warning) warning = sd.warning
+        } else {
+          warning = sd.detail || `Survey API error (${sr.status}). Check Render ADMIN_SECRET and SUPABASE_SERVICE_ROLE_KEY.`
+          console.error('Admin surveys API:', sr.status, sd)
         }
-      } catch { /* surveys optional until migration */ }
+      } catch (e) {
+        warning = 'Could not reach survey API. Check VITE_API_URL on Vercel.'
+        console.error('Admin surveys fetch failed:', e)
+      }
+
+      if (!loadedSurveys.length) {
+        const { data: directRows, error: directErr } = await supabase
+          .from('study_surveys')
+          .select('*')
+          .order('created_at', { ascending: false })
+        if (directErr) {
+          console.error('study_surveys direct read:', directErr)
+          if (!warning) {
+            warning = directErr.message?.includes('does not exist')
+              ? 'Table study_surveys missing — run SQL migrations in Supabase.'
+              : `Supabase read failed: ${directErr.message}`
+          }
+        } else if (directRows?.length) {
+          loadedSurveys = directRows
+          if (!warning) warning = 'Loaded from Supabase directly (API returned no rows).'
+        }
+      }
+
+      setSurveys(attachEmails(loadedSurveys))
+      setSurveyWarning(warning)
       setRefresh(new Date())
     } catch (e) {
       console.error('Admin load error:', e)
@@ -841,6 +883,15 @@ export default function AdminDashboard({ onExit }) {
           {/* ══ SURVEYS ══ */}
           {tab === 'surveys' && (
             <>
+              {surveyWarning && (
+                <div style={{
+                  marginBottom: 14, padding: '10px 14px', borderRadius: 10,
+                  background: 'rgba(251,191,36,.12)', border: '1px solid rgba(251,191,36,.35)',
+                  color: '#fde68a', fontSize: 12, lineHeight: 1.5,
+                }}>
+                  {surveyWarning}
+                </div>
+              )}
               <div style={{ ...s.statsGrid, gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 20 }}>
                 <StatCard label="Pre-test responses" value={surveyStats.preCount} sub="Before using Ekko" accent="#00e5ff" />
                 <StatCard label="Post-test responses" value={surveyStats.postCount} sub="After session" accent="#34d399" />

@@ -59,7 +59,7 @@ Plan limits are enforced on **both** frontend (UI locks) and backend (generate/s
 
 **API:** `GET /survey/status/{user_id}` · `POST /survey/submit` · `GET /admin/surveys` (header `X-Admin-Secret`)
 
-Run migrations in Supabase: `backend/migrations/add_study_surveys.sql` and `extend_study_surveys.sql`.
+**Study surveys table (required for admin Surveys tab):** In Supabase → SQL Editor, run the full script once: `backend/migrations/create_study_surveys_full.sql`. (Older split files `add_study_surveys.sql` + `extend_study_surveys.sql` are optional if you already ran them.)
 
 ---
 
