@@ -65,6 +65,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         if (cancelled) return;
         if (blobUrl) {
           setSrcOverride(blobUrl);
+          setAudioLoading(false);
           return;
         }
       }
@@ -82,7 +83,15 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       setAudioLoading(true);
       applyAudioSource(el, srcOverride);
     }
+    const t = setTimeout(() => setAudioLoading(false), 12000);
+    return () => clearTimeout(t);
   }, [srcOverride]);
+
+  useEffect(() => {
+    if (!playbackUrl || !audioLoading) return;
+    const t = setTimeout(() => setAudioLoading(false), 20000);
+    return () => clearTimeout(t);
+  }, [playbackUrl, audioLoading]);
 
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
@@ -340,6 +349,9 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       ) : audioError ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <p style={s.errorText}>{audioError}</p>
+          <p style={{ ...s.subtitle, margin: 0, textAlign: "center" }}>
+            Playback failed on this device — you can still continue below.
+          </p>
           <a href={tabOpenUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
         </div>
       ) : (
@@ -396,14 +408,18 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         </div>
       )}
 
-      {onDone && !audioLoading && !audioError && audioUrl && (
+      {onDone && audioUrl && (
         <button
           type="button"
           className="mp-done-btn"
-          style={s.doneBtn}
+          style={{
+            ...s.doneBtn,
+            marginTop: audioLoading || audioError ? 8 : 4,
+            opacity: audioLoading ? 0.95 : 1,
+          }}
           onClick={onDone}
         >
-          Done — continue →
+          Done — post-study survey →
         </button>
       )}
 

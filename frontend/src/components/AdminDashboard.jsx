@@ -184,19 +184,37 @@ export default function AdminDashboard({ onExit }) {
     setLoading(true)
     try {
       const [
-        { data: p }, { data: so }, { data: m },
+        { data: p }, { data: so },
         { data: r }, { data: x }
       ] = await Promise.all([
         supabase.from('profiles').select('*').order('created_at', { ascending: false }),
         supabase.from('songs').select('*').order('created_at', { ascending: false }),
-        supabase.from('mood_logs').select('*').order('created_at', { ascending: false }),
         supabase.from('user_rewards').select('*'),
         supabase.from('xp_events').select('*').order('created_at', { ascending: false }).limit(200),
       ])
       const profileRows = p || []
       setProfiles(profileRows)
       setSongs(so || [])
-      setMoods(m || [])
+
+      let moodRows = []
+      try {
+        const mr = await fetch(`${API}/admin/mood-logs`, {
+          headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
+        })
+        const md = await mr.json().catch(() => ({}))
+        if (mr.ok) moodRows = md.mood_logs || []
+        else console.error('Admin mood-logs API:', mr.status, md)
+      } catch (e) {
+        console.error('Admin mood-logs fetch failed:', e)
+      }
+      if (!moodRows.length) {
+        const { data: directMoods } = await supabase
+          .from('mood_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+        moodRows = directMoods || []
+      }
+      setMoods(moodRows)
       setRewards(r || [])
       setXpEvents(x || [])
 
@@ -956,7 +974,13 @@ export default function AdminDashboard({ onExit }) {
                     </thead>
                     <tbody>
                       {filteredSurveys.length === 0
-                        ? <tr><td colSpan={15} style={s.emptyState}>No survey responses yet — run migrations add_study_surveys.sql & extend_study_surveys.sql</td></tr>
+                        ? <tr><td colSpan={15} style={s.emptyState}>
+                            {surveyPhaseFilter === 'post'
+                              ? 'No post-test yet. Users finish a song, then tap Done — post-study survey on the player screen.'
+                              : surveyPhaseFilter === 'pre'
+                                ? 'No pre-test responses yet.'
+                                : 'No survey responses yet.'}
+                          </td></tr>
                         : filteredSurveys.map(sv => (
                             <tr key={sv.id || `${sv.user_id}-${sv.phase}`} style={s.tr}>
                               {surveyPhaseFilter === 'post' ? (

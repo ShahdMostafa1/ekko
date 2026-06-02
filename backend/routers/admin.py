@@ -143,3 +143,35 @@ async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")
             "No rows in study_surveys yet. Confirm migrations ran and testers completed pre/post surveys."
         )
     return out
+
+
+@router.get("/mood-logs", summary="List all mood log entries (service role)")
+async def list_mood_logs(x_admin_secret: str = Header(..., alias="X-Admin-Secret")):
+    _require_admin(x_admin_secret)
+    sb = _get_supabase_admin()
+    if not sb:
+        return {"mood_logs": [], "warning": "SUPABASE_URL or service key missing on backend."}
+    try:
+        resp = (
+            sb.table("mood_logs")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+        )
+        logs = list(resp.data or [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    emails: dict[str, str] = {}
+    try:
+        profiles = sb.table("profiles").select("id, email").execute()
+        for p in profiles.data or []:
+            emails[p["id"]] = p.get("email") or ""
+    except Exception:
+        pass
+
+    for row in logs:
+        row["email"] = emails.get(row.get("user_id"), "")
+
+    return {"mood_logs": logs}

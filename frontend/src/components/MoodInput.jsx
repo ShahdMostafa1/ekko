@@ -272,6 +272,21 @@ export default function MoodInput({ userId = "", region = null, language = null,
 
   const isAr = lang === "ar";
 
+  const persistMoodLog = async (mood) => {
+    if (!userId) return;
+    const text = (mood?.text || mood?.transcript || mood?.label || mood?.emotion || "").trim();
+    if (!text) return;
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/mood/detect-text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, user_id: userId, region: region?.id || "" }),
+      });
+    } catch (e) {
+      console.warn("[mood] persist log failed:", e);
+    }
+  };
+
   useEffect(() => {
     if (!userId) { setDailyUsage(null); return; }
     fetch(`${import.meta.env.VITE_API_URL}/music/usage/${userId}`)
@@ -471,6 +486,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
       const card    = EMOTION_CARDS[emotion];
       const mood    = applyPlanToMood({ ...card, emotion, nuancedKey: emotion, valence: 0.5, energy: 0.5, text: textInput });
       setTextMood(mood); onMoodDetected?.(mood);
+      persistMoodLog(mood);
     } finally {
       setTextAnalysing(false);
     }
@@ -495,6 +511,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
       const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[winner];
       const mood    = applyPlanToMood({ ...card, emotion: winner, nuancedKey: nuanced, valence: avgV, energy: avgA, text: winner });
       setQuizMood(mood); onMoodDetected?.(mood);
+      persistMoodLog(mood);
     }
   };
 
@@ -525,9 +542,10 @@ export default function MoodInput({ userId = "", region = null, language = null,
     });
   };
 
-  const selectQuickEmotion = (emotionKey) => {
+  const selectQuickEmotion = async (emotionKey) => {
     const mood = buildQuickMood(emotionKey);
     onMoodDetected?.(mood);
+    await persistMoodLog(mood);
     handleContinue(mood);
   };
 

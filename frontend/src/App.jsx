@@ -727,7 +727,7 @@ export default function App() {
           <MoodInput
             onSubmit={handleMoodSubmit}
             onMoodDetected={() => {}}
-            userId={userRef.current?.id}
+            userId={user?.id || userRef.current?.id || ''}
             region={region}
             language={language}
             userPlan={userPlan}
