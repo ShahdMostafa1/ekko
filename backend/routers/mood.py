@@ -27,6 +27,7 @@ router = APIRouter(prefix="/mood", tags=["Layer 2 — Mood Engine"])
 _whisper_model     = None
 _whisper_failed    = False
 _openrouter_audio_blocked = False
+_sentiment_pipe    = None  # lazy HF pipeline; None = not loaded yet
 
 AUDIO_MODELS = [
     "google/gemini-2.0-flash-001",
@@ -48,10 +49,11 @@ STT_CHAT_MODELS = [
     "qwen/qwen3-asr-flash-2026-02-10",
 ]
 TEXT_MODELS = [
+    "google/gemini-2.5-flash",
     "google/gemini-2.0-flash-001",
-    "google/gemini-flash-1.5",
+    "openai/gpt-4o-mini",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-v3-base:free",
+    "google/gemini-flash-1.5",
 ]
 
 UNKNOWN_EMOTIONS = {"unknown", "UNKNOWN", "", None}
@@ -713,7 +715,10 @@ Return ONLY valid JSON, no markdown, no preamble:
         except Exception as e:
             print(f"[mood:text] {model} failed: {e}")
 
-    print("[mood:text] all models failed, using HF fallback")
+    groq = _groq_text_emotion(text)
+    if groq:
+        return groq
+    print("[mood:text] all models failed")
     return None
 
 
@@ -781,6 +786,93 @@ def _blend_audio_and_text(
         "language":          audio_result.get("language", "unknown"),
         "method":            "text_wins_blend",
     }
+
+
+# ── Lightweight text fallback (no OpenRouter / no transformers) ───────────────
+def _heuristic_text_emotion(text: str) -> dict:
+    """Keyword + label heuristics when cloud models are down."""
+    t = (text or "").strip().lower()
+    EMOTION_TO_VA = {
+        "joy":      ( 0.8,  0.7),
+        "surprise": ( 0.6,  0.6),
+        "neutral":  ( 0.0,  0.4),
+        "sadness":  (-0.6,  0.3),
+        "anger":    (-0.5,  0.8),
+        "disgust":  (-0.6,  0.3),
+        "fear":     (-0.4,  0.7),
+    }
+    LABEL_MAP = {
+        "joyful & bright": "joy", "melancholic & introspective": "sadness",
+        "anxious & unsettled": "fear", "intense & charged": "anger",
+        "unsettled & resistant": "disgust", "calm & steady": "neutral",
+        "surprised & alert": "surprise",
+    }
+    for label, emo in LABEL_MAP.items():
+        if label in t:
+            v, a = EMOTION_TO_VA[emo]
+            return {
+                "top_emotion": emo, "secondary_emotion": None,
+                "valence": v, "arousal": a, "confidence": 0.82,
+                "reasoning": "Matched mood label.",
+                "all_emotions": [{"label": emo, "score": 0.82}],
+            }
+    rules = [
+        (("joy", "happy", "glad", "excited", "great", "love", "mabsoot", "مبسوط"), "joy"),
+        (("sad", "lonely", "alone", "tired", "depress", "cry", "miss", "حزين", "وحيد"), "sadness"),
+        (("angry", "mad", "furious", "stress", "hate", "غضب", "زعل"), "anger"),
+        (("scared", "afraid", "anxious", "worry", "panic", "fear", "خوف"), "fear"),
+        (("surprise", "shock", "wow"), "surprise"),
+        (("disgust", "gross", "resist"), "disgust"),
+    ]
+    for words, emo in rules:
+        if any(w in t for w in words):
+            v, a = EMOTION_TO_VA[emo]
+            return {
+                "top_emotion": emo, "secondary_emotion": None,
+                "valence": v, "arousal": a, "confidence": 0.75,
+                "reasoning": "Keyword-based mood estimate.",
+                "all_emotions": [{"label": emo, "score": 0.75}],
+            }
+    v, a = EMOTION_TO_VA["neutral"]
+    return {
+        "top_emotion": "neutral", "secondary_emotion": None,
+        "valence": v, "arousal": a, "confidence": 0.55,
+        "reasoning": "Could not reach AI models; neutral estimate.",
+        "all_emotions": [{"label": "neutral", "score": 0.55}],
+    }
+
+
+def _groq_text_emotion(text: str) -> dict | None:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+    prompt = (
+        "Return ONLY JSON: "
+        '{"top_emotion":"joy|sadness|anger|fear|surprise|disgust|neutral",'
+        '"valence":-1..1,"arousal":0..1,"confidence":0..1,"reasoning":"..."} '
+        f"Text: {text[:500]}"
+    )
+    try:
+        res = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 300, "temperature": 0.1},
+            timeout=12.0,
+        )
+        res.raise_for_status()
+        raw = res.json()["choices"][0]["message"]["content"].strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw.strip())
+        if result.get("top_emotion"):
+            print(f"[mood:text] groq emotion={result['top_emotion']}")
+            return result
+    except Exception as e:
+        print(f"[mood:text] groq failed: {e}")
+    return None
 
 
 # ── HuggingFace fallback (optional — graceful if transformers not installed) ──
@@ -906,6 +998,17 @@ def _persist_mood_log(
 
 
 # ── Request models ────────────────────────────────────────────────────────────
+class MoodLogRequest(BaseModel):
+    """Lightweight mood log (quiz / quick pick) — no Gemini call."""
+    user_id:    str
+    text:       str
+    region:     str   = ""
+    emotion:    str   = "neutral"
+    valence:    float = 0.5
+    arousal:    float = 0.5
+    confidence: float = 0.85
+
+
 class TextMoodRequest(BaseModel):
     text:    str
     user_id: str = ""
@@ -1053,6 +1156,28 @@ async def detect_mood(
     }
 
 
+@router.post("/log", summary="Save mood log without running full AI pipeline")
+async def log_mood_quick(req: MoodLogRequest):
+    if not req.user_id:
+        raise HTTPException(status_code=400, detail="user_id required")
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text required")
+    _persist_mood_log(
+        req.user_id,
+        max(0.0, min(1.0, req.valence)),
+        max(0.0, min(1.0, req.arousal)),
+        req.emotion or "neutral",
+        text,
+        req.confidence,
+        {},
+        req.region,
+        "text",
+        "",
+    )
+    return {"saved": True}
+
+
 # ── Text endpoint ─────────────────────────────────────────────────────────────
 @router.post("/detect-text", summary="Detect mood from typed text — Gemini agent")
 async def detect_mood_text(req: TextMoodRequest):
@@ -1075,14 +1200,23 @@ async def detect_mood_text(req: TextMoodRequest):
         all_emotions = agent_result.get("all_emotions", [])
         method       = "gemini_text"
     else:
-        fb           = _classifier_emotion(req.text)
+        fb = _heuristic_text_emotion(req.text)
+        try:
+            hf = _classifier_emotion(req.text)
+            if hf.get("confidence", 0) > fb.get("confidence", 0):
+                fb = hf
+                method = "hf_classifier"
+            else:
+                method = "heuristic"
+        except Exception as e:
+            print(f"[mood:text] classifier skipped: {e}")
+            method = "heuristic"
         top_emotion  = fb["top_emotion"]
         raw_valence  = fb["valence"]
         arousal      = round(fb["arousal"], 3)
         confidence   = round(fb["confidence"], 3)
         reasoning    = fb["reasoning"]
         all_emotions = fb["all_emotions"]
-        method       = "hf_classifier"
 
     valence = normalise(raw_valence)
 

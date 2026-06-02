@@ -277,11 +277,19 @@ export default function MoodInput({ userId = "", region = null, language = null,
     const text = (mood?.text || mood?.transcript || mood?.label || mood?.emotion || "").trim();
     if (!text) return;
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/mood/detect-text`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/mood/log`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, user_id: userId, region: region?.id || "" }),
+        body: JSON.stringify({
+          text,
+          user_id: userId,
+          region: region?.id || "",
+          emotion: mood?.emotion || mood?.nuancedKey || "neutral",
+          valence: mood?.valence ?? 0.5,
+          arousal: mood?.energy ?? mood?.arousal ?? 0.5,
+        }),
       });
+      if (!res.ok) console.warn("[mood] persist log failed:", res.status);
     } catch (e) {
       console.warn("[mood] persist log failed:", e);
     }

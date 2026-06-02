@@ -145,7 +145,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       region_label: params.region_label || "", mood_label: params.mood_label || "",
       emotion: params.emotion || "neutral", valence: params.valence ?? 0.5,
       energy: params.energy ?? 0.5, lyrics: params.lyrics || "",
-      audio_url: audioUrl, task_id: taskId || '', prompt_used: params.prompt_used || "",
+      audio_url: audioUrl, prompt_used: params.prompt_used || "",
       language: params.language || "English", language_code: params.language_code || "",
       artist_style_id: params.artist_style_id || "", artist_label: params.artist_label || "",
       title: params.title || "",

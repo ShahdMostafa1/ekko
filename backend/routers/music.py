@@ -7,6 +7,7 @@ GET  /music/history/{user_id} → songs grouped by region
 GET  /music/artist-styles   → list available artist-style voices per region
 """
 from __future__ import annotations
+import asyncio
 import os
 import httpx
 from datetime import datetime, timezone
@@ -24,8 +25,9 @@ SONAUTO_GENERATE = f"{SONAUTO_BASE}/generations/v3"
 SONAUTO_STATUS   = f"{SONAUTO_BASE}/generations"
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS = [
+    "google/gemini-2.5-flash",
     "google/gemini-2.0-flash-001",
-    "google/gemini-flash-1.5",
+    "openai/gpt-4o-mini",
     "meta-llama/llama-3.3-70b-instruct:free",
 ]
 
@@ -249,11 +251,26 @@ def _sonauto_headers() -> dict:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
+def _normalize_audio_url(url: str | None) -> str | None:
+    """Sonauto sometimes returns a CDN path without https:// host."""
+    if not url or not str(url).strip():
+        return None
+    u = str(url).strip()
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    if u.startswith("//"):
+        return f"https:{u}"
+    if u.startswith("/"):
+        return f"https://cdn.sonauto.ai{u}"
+    return f"https://cdn.sonauto.ai/{u.lstrip('/')}"
+
+
 def _extract_audio_url(data: dict) -> str | None:
-    return (
+    raw = (
         data.get("audio_url") or data.get("output_url") or data.get("url")
         or (data.get("song_paths") or [None])[0]
     )
+    return _normalize_audio_url(raw)
 
 
 def _is_allowed_audio_url(url: str) -> bool:
@@ -284,6 +301,7 @@ def _resolve_task_audio_url(task_id: str) -> str:
     audio_url = _extract_audio_url(data)
     if not audio_url:
         raise HTTPException(404, "No audio URL for this task")
+    audio_url = _normalize_audio_url(audio_url) or audio_url
     if not _is_allowed_audio_url(audio_url):
         host = urlparse(audio_url).netloc
         raise HTTPException(502, f"Audio host not allowed: {host}")
@@ -306,48 +324,45 @@ def _guess_audio_content_type(url: str, upstream: str | None) -> str:
     return "audio/mpeg"
 
 
-async def _proxy_audio_response(url: str, range_header: str | None = None) -> StreamingResponse:
-    """Stream audio through Ekko with correct Range / CORS headers for iOS Safari."""
+async def _proxy_audio_response(url: str, range_header: str | None = None) -> Response:
+    """Proxy audio through Ekko (buffered — reliable on Render; supports Range)."""
+    url = _normalize_audio_url(url) or url
     if not _is_allowed_audio_url(url):
-        raise HTTPException(400, "Audio URL host not allowed")
+        host = urlparse(url).netloc or url[:80]
+        raise HTTPException(400, f"Audio URL host not allowed: {host}")
 
     upstream_headers: dict[str, str] = {}
     if range_header:
         upstream_headers["Range"] = range_header
 
+    def _fetch():
+        with httpx.Client(timeout=90.0, follow_redirects=True) as client:
+            return client.get(url, headers=upstream_headers or None)
+
     try:
-        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-            async with client.stream("GET", url, headers=upstream_headers or None) as res:
-                if res.status_code >= 400:
-                    raise HTTPException(502, f"Upstream audio error {res.status_code}")
-
-                content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
-                out_headers = {
-                    "Cache-Control": "public, max-age=3600",
-                    "Accept-Ranges": "bytes",
-                    "Content-Disposition": "inline",
-                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
-                }
-                for name in ("Content-Range", "Content-Length"):
-                    if name in res.headers:
-                        out_headers[name] = res.headers[name]
-
-                status = res.status_code if res.status_code in (200, 206) else 200
-
-                async def body():
-                    async for chunk in res.aiter_bytes(65536):
-                        yield chunk
-
-                return StreamingResponse(
-                    body(),
-                    status_code=status,
-                    media_type=content_type,
-                    headers=out_headers,
-                )
+        res = await asyncio.to_thread(_fetch)
+        if res.status_code >= 400:
+            raise HTTPException(502, f"Upstream audio error {res.status_code}")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(502, f"Could not fetch audio: {e}") from e
+
+    content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
+    out_headers = {
+        "Cache-Control": "public, max-age=3600",
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": "inline",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+    }
+    for name in ("Content-Range", "Content-Length"):
+        if name in res.headers:
+            out_headers[name] = res.headers[name]
+    if "Content-Length" not in out_headers and res.content:
+        out_headers["Content-Length"] = str(len(res.content))
+
+    status = res.status_code if res.status_code in (200, 206) else 200
+    return Response(content=res.content, status_code=status, media_type=content_type, headers=out_headers)
 
 
 def _openrouter_headers() -> dict:
@@ -751,6 +766,8 @@ async def get_status(task_id: str):
 
     if state in ("SUCCESS", "COMPLETED", "COMPLETE", "DONE"):
         audio_url = _extract_audio_url(data)
+        if audio_url and not _is_allowed_audio_url(audio_url):
+            print(f"[music] WARN success but URL host odd: {urlparse(audio_url).netloc} url={audio_url[:100]}")
         return {
             "status": "SUCCESS",
             "audio_url": audio_url,
@@ -773,8 +790,10 @@ async def open_audio_by_task(task_id: str):
 
 @router.get("/open", summary="Redirect browser to allowlisted audio URL")
 async def open_audio_by_url(url: str = Query(..., min_length=8)):
+    url = _normalize_audio_url(url) or url
     if not _is_allowed_audio_url(url):
-        raise HTTPException(400, "Audio URL host not allowed")
+        host = urlparse(url).netloc or url[:80]
+        raise HTTPException(400, f"Audio URL host not allowed: {host}")
     return RedirectResponse(url, status_code=302)
 
 
@@ -783,6 +802,9 @@ async def stream_audio_by_task(task_id: str, request: Request):
     """Stream Sonauto audio through Ekko API so mobile browsers can play it."""
     try:
         url = _resolve_task_audio_url(task_id)
+        print(f"[music] stream task={task_id} host={urlparse(url).netloc}")
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"Sonauto status error {e.response.status_code}") from e
     return await _proxy_audio_response(url, request.headers.get("range"))
@@ -791,6 +813,8 @@ async def stream_audio_by_task(task_id: str, request: Request):
 @router.get("/stream", summary="Proxy audio by URL (saved songs)")
 async def stream_audio_by_url(request: Request, url: str = Query(..., min_length=8)):
     """Stream a previously saved audio URL through Ekko (allowlisted hosts only)."""
+    url = _normalize_audio_url(url) or url
+    print(f"[music] stream url host={urlparse(url).netloc}")
     return await _proxy_audio_response(url, request.headers.get("range"))
 
 
@@ -825,8 +849,7 @@ async def save_song(req: SaveSongRequest):
         "artist_style_id": req.artist_style_id, "artist_label": req.artist_label,
         "title": req.title, "is_favorite": False, "license": license_type,
     }
-    if req.task_id:
-        row_data["task_id"] = req.task_id
+    # task_id column is optional — run backend/migrations/add_songs_task_id.sql first
     try:
         resp = sb.table("songs").insert(row_data).execute()
         row = (resp.data or [None])[0]
