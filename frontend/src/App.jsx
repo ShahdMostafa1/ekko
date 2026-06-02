@@ -372,10 +372,10 @@ export default function App() {
   const routeToAppHome = useCallback((profile) => {
     if (profile?.region) {
       setRegion({ id: profile.region, label: profile.region, emoji: '🌍' })
-      navigateTo('mood', { reset: true })
     } else {
-      navigateTo('onboarding', { reset: true })
+      setRegion(null)
     }
+    navigateTo('onboarding', { reset: true })
     scheduleDailyChallenge()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -415,7 +415,7 @@ export default function App() {
     setSurveyLocked(false)
     if (phase === 'pre') {
       const reg = homeRegionRef.current
-      routeToAppHome(reg && reg !== 'global' ? { region: reg } : null)
+      routeToAppHome(reg ? { region: reg } : null)
       return
     }
     setMusicParams(null)
