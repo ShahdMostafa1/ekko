@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -600,6 +600,7 @@ class SaveSongRequest(BaseModel):
     energy:          float = 0.5
     lyrics:          str   = ""
     audio_url:       str   = ""
+    task_id:         str   = ""
     prompt_used:     str   = ""
     language:        str   = "English"
     language_code:   str   = ""
@@ -760,6 +761,23 @@ async def get_status(task_id: str):
     return {"status": "GENERATING"}
 
 
+@router.get("/open/{task_id}", summary="Redirect browser to Sonauto CDN audio (new tab)")
+async def open_audio_by_task(task_id: str):
+    """Safari/iOS can play the CDN file directly; API stream URLs often fail in a new tab."""
+    try:
+        url = _resolve_task_audio_url(task_id)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"Sonauto status error {e.response.status_code}") from e
+    return RedirectResponse(url, status_code=302)
+
+
+@router.get("/open", summary="Redirect browser to allowlisted audio URL")
+async def open_audio_by_url(url: str = Query(..., min_length=8)):
+    if not _is_allowed_audio_url(url):
+        raise HTTPException(400, "Audio URL host not allowed")
+    return RedirectResponse(url, status_code=302)
+
+
 @router.get("/stream/{task_id}", summary="Proxy audio for in-app playback (CORS-safe)")
 async def stream_audio_by_task(task_id: str, request: Request):
     """Stream Sonauto audio through Ekko API so mobile browsers can play it."""
@@ -807,6 +825,8 @@ async def save_song(req: SaveSongRequest):
         "artist_style_id": req.artist_style_id, "artist_label": req.artist_label,
         "title": req.title, "is_favorite": False, "license": license_type,
     }
+    if req.task_id:
+        row_data["task_id"] = req.task_id
     try:
         resp = sb.table("songs").insert(row_data).execute()
         row = (resp.data or [None])[0]
@@ -819,6 +839,8 @@ async def save_song(req: SaveSongRequest):
             fallback.pop("license", None)
         if "is_favorite" in err:
             fallback.pop("is_favorite", None)
+        if "task_id" in err:
+            fallback.pop("task_id", None)
         try:
             resp = sb.table("songs").insert(fallback).execute()
             row = (resp.data or [None])[0]

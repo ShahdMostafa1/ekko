@@ -594,7 +594,7 @@ export default function AdminDashboard({ onExit }) {
                               </td>
                               <td style={{ ...s.td, fontWeight:700, color:'#00ffa3' }}>{u.songs}</td>
                               <td style={{ ...s.td, color:'#7c5ce7' }}>{u.moods}</td>
-                              <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtDate(u.created_at)}</td>
+                              <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{fmtTime(u.created_at)}</td>
                               <td style={{ ...s.td, fontSize:11, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>{lastMood ? fmtTime(lastMood.created_at) : '—'}</td>
                               <td style={s.td}>
                                 <button

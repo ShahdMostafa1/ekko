@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
-import { proxiedAudioUrl } from '../utils/audioProxy';
+import { proxiedAudioUrl, openAudioUrl } from '../utils/audioProxy';
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
@@ -44,6 +44,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     : POLL_INTERVAL_FREE;
   const isPriority   = pollInterval === POLL_INTERVAL_PRIORITY;
   const playbackUrl  = useMemo(() => proxiedAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
+  const tabOpenUrl   = useMemo(() => openAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
   const [srcOverride, setSrcOverride] = useState(null);
   const effectiveSrc = srcOverride || playbackUrl;
 
@@ -135,7 +136,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       region_label: params.region_label || "", mood_label: params.mood_label || "",
       emotion: params.emotion || "neutral", valence: params.valence ?? 0.5,
       energy: params.energy ?? 0.5, lyrics: params.lyrics || "",
-      audio_url: audioUrl, prompt_used: params.prompt_used || "",
+      audio_url: audioUrl, task_id: taskId || '', prompt_used: params.prompt_used || "",
       language: params.language || "English", language_code: params.language_code || "",
       artist_style_id: params.artist_style_id || "", artist_label: params.artist_label || "",
       title: params.title || "",
@@ -339,7 +340,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       ) : audioError ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <p style={s.errorText}>{audioError}</p>
-          <a href={playbackUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
+          <a href={tabOpenUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
         </div>
       ) : (
         <button style={s.playBtn} onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
@@ -360,7 +361,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       {!audioLoading && !audioError && (
         <div className="mp-action-row" style={s.actionRow}>
           {canDownload(userPlan) ? (
-            <a href={audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
+            <a href={tabOpenUrl || audioUrl} download target="_blank" rel="noreferrer" style={s.actionBtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 3v13M6 11l6 6 6-6"/><path d="M3 20h18"/>
               </svg>

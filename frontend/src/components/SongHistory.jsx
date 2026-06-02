@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { applyHistoryLimit, canDownload } from '../utils/planUtils'
-import { proxiedAudioUrl } from '../utils/audioProxy'
+import { proxiedAudioUrl, openAudioUrl } from '../utils/audioProxy'
 import {
   configureMobileAudio,
   fetchBlobAudioUrl,
@@ -111,8 +111,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
   const togglePlay = async (song) => {
     const songId = String(song.id)
-    const url = proxiedAudioUrl(song.audio_url, song.task_id)
-    if (!url) return
+    const streamUrl = proxiedAudioUrl(song.audio_url, song.task_id)
+    if (!streamUrl) return
 
     if (activeSongRef.current === songId && audioRef.current) {
       if (!audioRef.current.paused) {
@@ -126,7 +126,13 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
     if (audioRef.current) clearActivePlayback(activeSongRef.current)
 
-    const audio = configureMobileAudio(new Audio(), url)
+    let playSrc = streamUrl
+    if (isMobileBrowser()) {
+      const blobUrl = await fetchBlobAudioUrl(streamUrl)
+      if (blobUrl) playSrc = blobUrl
+    }
+
+    const audio = configureMobileAudio(new Audio(), playSrc)
     audioRef.current = audio
     activeSongRef.current = songId
     setActiveSongId(songId)
@@ -142,14 +148,20 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       trackProgress(songId)
     }
     audio.onerror = async () => {
-      if (isMobileBrowser()) {
-        const blobUrl = await fetchBlobAudioUrl(url)
-        if (blobUrl) {
-          configureMobileAudio(audio, blobUrl)
-          if (await playFromUserGesture(audio)) {
-            trackProgress(songId)
-            return
-          }
+      if (audio.currentTime > 1 && !audio.paused && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        return
+      }
+      if (playSrc !== streamUrl) {
+        clearActivePlayback(songId)
+        return
+      }
+      const blobUrl = await fetchBlobAudioUrl(streamUrl)
+      if (blobUrl) {
+        configureMobileAudio(audio, blobUrl)
+        if (await playFromUserGesture(audio)) {
+          setIsPlaying(true)
+          trackProgress(songId)
+          return
         }
       }
       clearActivePlayback(songId)
@@ -161,8 +173,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       return
     }
 
-    if (isMobileBrowser()) {
-      const blobUrl = await fetchBlobAudioUrl(url)
+    if (playSrc === streamUrl && isMobileBrowser()) {
+      const blobUrl = await fetchBlobAudioUrl(streamUrl)
       if (blobUrl) {
         configureMobileAudio(audio, blobUrl)
         if (await playFromUserGesture(audio)) {
@@ -360,7 +372,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
                 {canDownload(userPlan) ? (
                   <a
                     className="sh-action-btn sh-dl-btn"
-                    href={song.audio_url}
+                    href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
                     download
                     target="_blank"
                     rel="noreferrer"
@@ -436,7 +448,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
                 {canDownload(userPlan) ? (
                   <a
                     className="sh-dl-link"
-                    href={song.audio_url}
+                    href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
                     download
                     target="_blank"
                     rel="noreferrer"
