@@ -218,6 +218,24 @@ export default function AdminDashboard({ onExit }) {
     if (authed) loadData()
   }, [authed, loadData])
 
+  const postSurveys = surveys.filter(s => s.phase === 'post')
+  const preSurveys  = surveys.filter(s => s.phase === 'pre')
+  const surveyStats = useMemo(() => ({
+    preCount:  preSurveys.length,
+    postCount: postSurveys.length,
+    postAvg: {
+      experience: avgField(postSurveys, 'experience_rating'),
+      mood:       avgField(postSurveys, 'mood_accuracy'),
+      music:      avgField(postSurveys, 'music_quality'),
+      cultural:   avgField(postSurveys, 'cultural_fit'),
+      recommend:  avgField(postSurveys, 'recommend_score'),
+    },
+    preAvg: {
+      expectedMood: avgField(preSurveys, 'expected_mood_match'),
+      expectedQual: avgField(preSurveys, 'expected_quality'),
+    },
+  }), [postSurveys, preSurveys])
+
   if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />
 
   // ── Enriched user rows ──────────────────────────────────────────────────────
@@ -333,24 +351,6 @@ export default function AdminDashboard({ onExit }) {
     ].join(' ').toLowerCase()
     return blob.includes(q)
   })
-
-  const postSurveys = surveys.filter(s => s.phase === 'post')
-  const preSurveys  = surveys.filter(s => s.phase === 'pre')
-  const surveyStats = useMemo(() => ({
-    preCount:  preSurveys.length,
-    postCount: postSurveys.length,
-    postAvg: {
-      experience: avgField(postSurveys, 'experience_rating'),
-      mood:       avgField(postSurveys, 'mood_accuracy'),
-      music:      avgField(postSurveys, 'music_quality'),
-      cultural:   avgField(postSurveys, 'cultural_fit'),
-      recommend:  avgField(postSurveys, 'recommend_score'),
-    },
-    preAvg: {
-      expectedMood: avgField(preSurveys, 'expected_mood_match'),
-      expectedQual: avgField(preSurveys, 'expected_quality'),
-    },
-  }), [postSurveys, preSurveys])
 
   // ── Overview stats ──────────────────────────────────────────────────────────
   const totalXp      = profiles.reduce((s, p) => s + (p.xp || 0), 0)
