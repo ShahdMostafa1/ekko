@@ -75,8 +75,9 @@ export function revokeBlobAudioUrl() {
  * Android fallback: fetch proxied stream into a blob URL (same CORS rules as <audio>).
  * Returns blob URL or null on failure.
  */
+/** Download proxied audio into a blob URL — reliable on iOS Safari and Android. */
 export async function fetchBlobAudioUrl(streamUrl) {
-  if (!streamUrl || !isAndroid()) return null
+  if (!streamUrl || !isMobileBrowser()) return null
   revokeBlobAudioUrl()
   try {
     const res = await fetch(streamUrl, { mode: 'cors', credentials: 'omit' })

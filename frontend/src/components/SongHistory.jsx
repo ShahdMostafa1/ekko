@@ -4,7 +4,7 @@ import { proxiedAudioUrl } from '../utils/audioProxy'
 import {
   configureMobileAudio,
   fetchBlobAudioUrl,
-  isAndroid,
+  isMobileBrowser,
   playFromUserGesture,
   revokeBlobAudioUrl,
 } from '../utils/mobileAudio'
@@ -142,7 +142,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       trackProgress(songId)
     }
     audio.onerror = async () => {
-      if (isAndroid()) {
+      if (isMobileBrowser()) {
         const blobUrl = await fetchBlobAudioUrl(url)
         if (blobUrl) {
           configureMobileAudio(audio, blobUrl)
@@ -161,7 +161,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       return
     }
 
-    if (isAndroid()) {
+    if (isMobileBrowser()) {
       const blobUrl = await fetchBlobAudioUrl(url)
       if (blobUrl) {
         configureMobileAudio(audio, blobUrl)

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -306,41 +306,48 @@ def _guess_audio_content_type(url: str, upstream: str | None) -> str:
     return "audio/mpeg"
 
 
-def _proxy_audio_response(url: str, range_header: str | None = None) -> Response:
+async def _proxy_audio_response(url: str, range_header: str | None = None) -> StreamingResponse:
+    """Stream audio through Ekko with correct Range / CORS headers for iOS Safari."""
     if not _is_allowed_audio_url(url):
         raise HTTPException(400, "Audio URL host not allowed")
-    upstream_headers = {"Range": range_header} if range_header else None
+
+    upstream_headers: dict[str, str] = {}
+    if range_header:
+        upstream_headers["Range"] = range_header
+
     try:
-        res = httpx.get(url, timeout=90, follow_redirects=True, headers=upstream_headers)
-        res.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(502, f"Upstream audio error {e.response.status_code}") from e
+        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers=upstream_headers or None) as res:
+                if res.status_code >= 400:
+                    raise HTTPException(502, f"Upstream audio error {res.status_code}")
+
+                content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
+                out_headers = {
+                    "Cache-Control": "public, max-age=3600",
+                    "Accept-Ranges": "bytes",
+                    "Content-Disposition": "inline",
+                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+                }
+                for name in ("Content-Range", "Content-Length"):
+                    if name in res.headers:
+                        out_headers[name] = res.headers[name]
+
+                status = res.status_code if res.status_code in (200, 206) else 200
+
+                async def body():
+                    async for chunk in res.aiter_bytes(65536):
+                        yield chunk
+
+                return StreamingResponse(
+                    body(),
+                    status_code=status,
+                    media_type=content_type,
+                    headers=out_headers,
+                )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"Could not fetch audio: {e}") from e
-
-    content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
-
-    headers = {
-        "Cache-Control": "public, max-age=3600",
-        "Accept-Ranges": "bytes",
-        "Content-Disposition": "inline",
-    }
-    for name in ("Content-Range", "Content-Length"):
-        if name in res.headers:
-            headers[name] = res.headers[name]
-    if "Content-Length" not in headers and res.content:
-        headers["Content-Length"] = str(len(res.content))
-
-    status = res.status_code
-    if status not in (200, 206):
-        status = 206 if range_header and res.status_code < 400 else 200
-
-    return Response(
-        content=res.content,
-        status_code=status,
-        media_type=content_type,
-        headers=headers,
-    )
 
 
 def _openrouter_headers() -> dict:
@@ -760,13 +767,13 @@ async def stream_audio_by_task(task_id: str, request: Request):
         url = _resolve_task_audio_url(task_id)
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"Sonauto status error {e.response.status_code}") from e
-    return _proxy_audio_response(url, request.headers.get("range"))
+    return await _proxy_audio_response(url, request.headers.get("range"))
 
 
 @router.get("/stream", summary="Proxy audio by URL (saved songs)")
 async def stream_audio_by_url(request: Request, url: str = Query(..., min_length=8)):
     """Stream a previously saved audio URL through Ekko (allowlisted hosts only)."""
-    return _proxy_audio_response(url, request.headers.get("range"))
+    return await _proxy_audio_response(url, request.headers.get("range"))
 
 
 @router.get("/usage/{user_id}", summary="Daily generation usage for plan limits")

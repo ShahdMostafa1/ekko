@@ -4,7 +4,7 @@ import { proxiedAudioUrl } from '../utils/audioProxy';
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
-  isAndroid,
+  isMobileBrowser,
   mobileAudioElementProps,
   playFromUserGesture,
   revokeBlobAudioUrl,
@@ -56,8 +56,22 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     if (!playbackUrl) return;
     setAudioLoading(true);
     setAudioError(null);
-    const el = audioRef.current;
-    if (el) applyAudioSource(el, playbackUrl);
+
+    let cancelled = false;
+    const prime = async () => {
+      if (isMobileBrowser()) {
+        const blobUrl = await fetchBlobAudioUrl(playbackUrl);
+        if (cancelled) return;
+        if (blobUrl) {
+          setSrcOverride(blobUrl);
+          return;
+        }
+      }
+      const el = audioRef.current;
+      if (el && !cancelled) applyAudioSource(el, playbackUrl);
+    };
+    prime();
+    return () => { cancelled = true; };
   }, [playbackUrl]);
 
   useEffect(() => {
@@ -146,25 +160,27 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     if (audioRef.current) audioRef.current.currentTime = 0;
   };
   const onError = async () => {
-    setAudioLoading(false);
     const el = audioRef.current;
     if (!el || !effectiveSrc) {
+      setAudioLoading(false);
       setAudioError("Could not load audio. Try opening in a new tab.");
       return;
     }
-    retryRef.current += 1;
-    if (retryRef.current === 1) {
-      setTimeout(() => el.load(), 400);
+    // Safari sometimes fires error while still playing — ignore if buffer is OK
+    if (el.currentTime > 1 && !el.paused && el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       return;
     }
-    if (isAndroid() && playbackUrl && !srcOverride && retryRef.current === 2) {
+    retryRef.current += 1;
+    if (playbackUrl && !srcOverride && retryRef.current <= 2) {
       const blobUrl = await fetchBlobAudioUrl(playbackUrl);
       if (blobUrl) {
         setSrcOverride(blobUrl);
         setAudioError(null);
+        setAudioLoading(true);
         return;
       }
     }
+    setAudioLoading(false);
     setAudioError("Could not load audio. Try opening in a new tab.");
   };
 
@@ -175,6 +191,15 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       el.pause();
       setPlaying(false);
       return;
+    }
+    if (isMobileBrowser() && playbackUrl && !srcOverride) {
+      setAudioLoading(true);
+      const blobUrl = await fetchBlobAudioUrl(playbackUrl);
+      if (blobUrl) {
+        setSrcOverride(blobUrl);
+        applyAudioSource(el, blobUrl);
+        setAudioLoading(false);
+      }
     }
     if (el.readyState < HTMLMediaElement.HAVE_METADATA && effectiveSrc) {
       applyAudioSource(el, effectiveSrc);
@@ -247,9 +272,9 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     <div className="mp-card" style={s.card}>
       <audio
         ref={audioRef}
-        key={effectiveSrc}
-        src={effectiveSrc}
+        src={effectiveSrc || undefined}
         onCanPlay={onCanPlay}
+        onPlaying={() => { setAudioLoading(false); setAudioError(null); }}
         onError={onError}
         onLoadedMetadata={onLoadedMetadata}
         onTimeUpdate={onTimeUpdate}
