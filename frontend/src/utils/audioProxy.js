@@ -1,3 +1,13 @@
+/** Normalize Sonauto CDN paths to a full https URL. */
+export function directSonautoUrl(audioUrl) {
+  if (!audioUrl) return null
+  const u = String(audioUrl).trim()
+  if (/^https?:\/\//i.test(u)) return u
+  if (u.startsWith('//')) return `https:${u}`
+  if (u.startsWith('/')) return `https://cdn.sonauto.ai${u}`
+  return `https://cdn.sonauto.ai/${u.replace(/^\//, '')}`
+}
+
 /** Play Sonauto CDN audio through our API (avoids CORS / mobile Safari & Android Chrome). */
 
 export function proxiedAudioUrl(audioUrl, taskId) {

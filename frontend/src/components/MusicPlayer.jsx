@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
-import { proxiedAudioUrl, openAudioUrl } from '../utils/audioProxy';
+import { proxiedAudioUrl, openAudioUrl, directSonautoUrl } from '../utils/audioProxy';
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
@@ -189,6 +189,15 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         setAudioLoading(true);
         return;
       }
+    }
+    const direct = directSonautoUrl(audioUrl);
+    if (direct && effectiveSrc !== direct && retryRef.current <= 3) {
+      retryRef.current += 1;
+      setSrcOverride(null);
+      applyAudioSource(el, direct);
+      setAudioError(null);
+      setAudioLoading(true);
+      return;
     }
     setAudioLoading(false);
     setAudioError("Could not load audio. Try opening in a new tab.");

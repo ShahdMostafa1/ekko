@@ -273,11 +273,22 @@ def _extract_audio_url(data: dict) -> str | None:
     return _normalize_audio_url(raw)
 
 
+def _audio_url_host(url: str) -> str:
+    """Parse hostname from a full URL, bare host, or Sonauto CDN path."""
+    u = (_normalize_audio_url(url) or str(url)).strip()
+    if not u:
+        return ""
+    if "://" not in u:
+        u = f"https://{u}"
+    parsed = urlparse(u)
+    return (parsed.netloc or "").lower()
+
+
 def _is_allowed_audio_url(url: str) -> bool:
     try:
-        host = urlparse(url).netloc.lower()
-        if not host.startswith("http"):
-            host = urlparse(f"https://{url}").netloc.lower()
+        host = _audio_url_host(url)
+        if not host:
+            return False
         if host == "sonauto.ai" or host.endswith(".sonauto.ai"):
             return True
         return any(host == suffix or host.endswith(f".{suffix}") for suffix in _ALLOWED_AUDIO_HOST_SUFFIXES)
@@ -303,8 +314,7 @@ def _resolve_task_audio_url(task_id: str) -> str:
         raise HTTPException(404, "No audio URL for this task")
     audio_url = _normalize_audio_url(audio_url) or audio_url
     if not _is_allowed_audio_url(audio_url):
-        host = urlparse(audio_url).netloc
-        raise HTTPException(502, f"Audio host not allowed: {host}")
+        raise HTTPException(502, f"Audio host not allowed: {_audio_url_host(audio_url)}")
 
     _task_audio_cache[task_id] = audio_url
     return audio_url
@@ -328,16 +338,21 @@ async def _proxy_audio_response(url: str, range_header: str | None = None) -> Re
     """Proxy audio through Ekko (buffered — reliable on Render; supports Range)."""
     url = _normalize_audio_url(url) or url
     if not _is_allowed_audio_url(url):
-        host = urlparse(url).netloc or url[:80]
-        raise HTTPException(400, f"Audio URL host not allowed: {host}")
+        raise HTTPException(400, f"Audio URL host not allowed: {_audio_url_host(url)}")
 
     upstream_headers: dict[str, str] = {}
     if range_header:
         upstream_headers["Range"] = range_header
 
     def _fetch():
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; Ekko/1.0)",
+            "Accept": "audio/*,*/*;q=0.8",
+        }
+        if upstream_headers:
+            headers.update(upstream_headers)
         with httpx.Client(timeout=90.0, follow_redirects=True) as client:
-            return client.get(url, headers=upstream_headers or None)
+            return client.get(url, headers=headers)
 
     try:
         res = await asyncio.to_thread(_fetch)
@@ -792,8 +807,7 @@ async def open_audio_by_task(task_id: str):
 async def open_audio_by_url(url: str = Query(..., min_length=8)):
     url = _normalize_audio_url(url) or url
     if not _is_allowed_audio_url(url):
-        host = urlparse(url).netloc or url[:80]
-        raise HTTPException(400, f"Audio URL host not allowed: {host}")
+        raise HTTPException(400, f"Audio URL host not allowed: {_audio_url_host(url)}")
     return RedirectResponse(url, status_code=302)
 
 
