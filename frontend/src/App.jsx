@@ -146,8 +146,13 @@ export default function App() {
   const homeRegionRef      = useRef(null)
   const dailyCtaTimerRef   = useRef(null)
   const navStackRef        = useRef([])
+  const screenRef          = useRef('loading')
 
   const NO_STACK_SCREENS = useRef(new Set(['loading', 'auth', 'admin', 'generating'])).current
+
+  useEffect(() => {
+    screenRef.current = screen
+  }, [screen])
 
   const navigateTo = useCallback((nextScreen, { replace = false, reset = false } = {}) => {
     if (reset) {
@@ -375,24 +380,37 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const routeAfterAuth = useCallback(async (authUser, profile) => {
-    const cached = getCachedSurveyStatus(authUser.id)
-    const status = cached || await fetchSurveyStatus(authUser.id)
+    const status = await fetchSurveyStatus(authUser.id, { force: true })
     setSurveyStatus(status)
+    patchSurveyStatusCache(authUser.id, status)
+
     if (status.pre_done) {
-      routeToAppHome(profile)
+      if (screenRef.current === 'loading' || screenRef.current === 'auth') {
+        routeToAppHome(profile)
+      }
+      scheduleDailyChallenge()
       return
     }
+
+    // Only force pre-survey on first entry — not when token refresh reloads profile mid-session
+    if (screenRef.current !== 'loading' && screenRef.current !== 'auth') {
+      scheduleDailyChallenge()
+      return
+    }
+
     setSurveyPhase('pre')
     setSurveyLocked(true)
     navigateTo('survey', { reset: true })
     scheduleDailyChallenge()
   }, [routeToAppHome])
 
-  const handleSurveyComplete = useCallback((phase) => {
+  const handleSurveyComplete = useCallback(async (phase) => {
     const userId = userRef.current?.id
     if (userId) {
       patchSurveyStatusCache(userId, { [`${phase}_done`]: true })
-      setSurveyStatus(prev => ({ ...(prev || {}), [`${phase}_done`]: true }))
+      const fresh = await fetchSurveyStatus(userId, { force: true })
+      setSurveyStatus(fresh)
+      patchSurveyStatusCache(userId, fresh)
     }
     setSurveyLocked(false)
     if (phase === 'pre') {
@@ -413,9 +431,9 @@ export default function App() {
   const goToPostSurvey = useCallback(async () => {
     const currentUser = userRef.current
     if (!currentUser) return
-    const cached = getCachedSurveyStatus(currentUser.id)
-    const status = cached || await fetchSurveyStatus(currentUser.id)
+    const status = await fetchSurveyStatus(currentUser.id, { force: true })
     setSurveyStatus(status)
+    patchSurveyStatusCache(currentUser.id, status)
     if (status.post_done) {
       setMusicParams(null)
       navigateTo('mood')
@@ -471,11 +489,6 @@ export default function App() {
 
   // ── Auth state ────────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) loadProfile(session.user)
-      else navigateTo('auth', { reset: true })
-    })
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         clearSurveyStatusCache(userRef.current?.id)
@@ -492,9 +505,14 @@ export default function App() {
         navigateTo('auth', { reset: true })
         return
       }
-      // Prevent double-load: if already signed in, skip
+      if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'PASSWORD_RECOVERY') return
       if (event === 'SIGNED_IN' && userRef.current) return
-      if (session?.user) loadProfile(session.user)
+      if (event === 'INITIAL_SESSION') {
+        if (session?.user) loadProfile(session.user)
+        else navigateTo('auth', { reset: true })
+        return
+      }
+      if (event === 'SIGNED_IN' && session?.user) loadProfile(session.user)
     })
 
     return () => {
@@ -624,11 +642,17 @@ export default function App() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         screen={screen}
-        onNavigate={(dest) => {
+        onNavigate={async (dest) => {
           const VALID = ['mood','history','rewards','plans','survey','language','cocreation','player']
           if (!VALID.includes(dest)) return
           if (screen === 'player' && dest !== 'player') setMusicParams(null)
-          if (dest === 'survey') setSurveyLocked(false)
+          if (dest === 'survey' && userRef.current?.id) {
+            const st = await fetchSurveyStatus(userRef.current.id, { force: true })
+            setSurveyStatus(st)
+            patchSurveyStatusCache(userRef.current.id, st)
+            setSurveyPhase(st.pre_done && !st.post_done ? 'post' : 'pre')
+            setSurveyLocked(false)
+          }
           navigateTo(dest)
           setSidebarOpen(false)
         }}

@@ -33,12 +33,15 @@ MOCK_MODE      = False
 MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0d42b.mp3"
 
 _ALLOWED_AUDIO_HOST_SUFFIXES = (
-    "sonauto.ai",
+    "sonauto.ai",          # cdn.sonauto.ai, api.sonauto.ai, etc.
+    "cdn.sonauto.ai",
     "amazonaws.com",
     "cloudfront.net",
+    "r2.dev",
     "pixabay.com",
     "digitaloceanspaces.com",
     "googleusercontent.com",
+    "soundhelix.com",
 )
 
 _task_audio_cache: dict[str, str] = {}
@@ -258,6 +261,8 @@ def _is_allowed_audio_url(url: str) -> bool:
         host = urlparse(url).netloc.lower()
         if not host.startswith("http"):
             host = urlparse(f"https://{url}").netloc.lower()
+        if host == "sonauto.ai" or host.endswith(".sonauto.ai"):
+            return True
         return any(host == suffix or host.endswith(f".{suffix}") for suffix in _ALLOWED_AUDIO_HOST_SUFFIXES)
     except Exception:
         return False
@@ -280,7 +285,8 @@ def _resolve_task_audio_url(task_id: str) -> str:
     if not audio_url:
         raise HTTPException(404, "No audio URL for this task")
     if not _is_allowed_audio_url(audio_url):
-        print(f"[music] stream allowlist miss host={urlparse(audio_url).netloc}")
+        host = urlparse(audio_url).netloc
+        raise HTTPException(502, f"Audio host not allowed: {host}")
 
     _task_audio_cache[task_id] = audio_url
     return audio_url

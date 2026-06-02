@@ -6,6 +6,7 @@ import {
   validateSurveyForm,
   buildSurveyPayload,
 } from '../utils/surveyQuestions'
+import { fetchSurveyStatus, patchSurveyStatusCache } from '../utils/tagline'
 
 const API = import.meta.env.VITE_API_URL
 
@@ -210,11 +211,14 @@ export default function StudySurvey({
         const data = await res.json().catch(() => ({}))
         throw new Error(data.detail || `HTTP ${res.status}`)
       }
+      const body = await res.json().catch(() => ({}))
+      if (body.warning) console.warn('[survey]', body.warning)
+      const fresh = await fetchSurveyStatus(userId, { force: true })
       setDone(true)
-      const nextStatus = { ...status, [`${phase}_done`]: true }
-      setStatus(nextStatus)
-      onStatusChange?.(nextStatus)
-      if (!lockPhase) onComplete?.(phase)
+      setStatus(fresh)
+      patchSurveyStatusCache(userId, fresh)
+      onStatusChange?.(fresh)
+      if (lockPhase) onComplete?.(phase)
     } catch (err) {
       setError(err.message || 'Could not save survey.')
     } finally {
