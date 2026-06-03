@@ -75,6 +75,29 @@ export function applyAudioSource(el, src) {
   el.load()
 }
 
+/** Wait until media can start playback (needed on Android before .play()). */
+export function waitUntilCanPlay(el, timeoutMs = 20000) {
+  if (!el) return Promise.reject(new Error('no element'))
+  if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error('timeout'))
+    }, timeoutMs)
+    const onReady = () => { cleanup(); resolve() }
+    const onErr = () => { cleanup(); reject(new Error('media-error')) }
+    const cleanup = () => {
+      clearTimeout(timer)
+      el.removeEventListener('canplay', onReady)
+      el.removeEventListener('error', onErr)
+    }
+    el.addEventListener('canplay', onReady, { once: true })
+    el.addEventListener('error', onErr, { once: true })
+  })
+}
+
 /** Play after a user gesture; returns false if blocked. */
 export async function playFromUserGesture(el) {
   if (!el) return false

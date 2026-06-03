@@ -264,6 +264,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
   const [detectedLang, setDetectedLang]   = useState("");
   const [detectedMood, setDetectedMood]   = useState(null);
   const [textAnalysing, setTextAnalysing] = useState(false);
+  const [continuing, setContinuing]       = useState(false);
   const mediaRecorderRef = useRef(null);
   const chunksRef        = useRef([]);
   const mimeTypeRef      = useRef("audio/webm");
@@ -539,16 +540,22 @@ export default function MoodInput({ userId = "", region = null, language = null,
 
   const resetQuiz = () => { setQuizStep(0); setQuizAnswers([]); setQuizMood(null); };
 
-  const handleContinue = (mood) => {
-    const planned = applyPlanToMood(mood);
-    onSubmit?.({
-      label:   cardLabel(planned),
-      tags:    cardTags(planned),
-      valence: planned.valence, energy: planned.energy,
-      emotion: clampEmotionForPlan(planned.nuancedKey || planned.emotion, userPlan),
-      text: planned.text || planned.label,
-      source: tab,
-    });
+  const handleContinue = async (mood) => {
+    if (continuing) return;
+    setContinuing(true);
+    try {
+      const planned = applyPlanToMood(mood);
+      await onSubmit?.({
+        label:   cardLabel(planned),
+        tags:    cardTags(planned),
+        valence: planned.valence, energy: planned.energy,
+        emotion: clampEmotionForPlan(planned.nuancedKey || planned.emotion, userPlan),
+        text: planned.text || planned.label,
+        source: tab,
+      });
+    } finally {
+      setContinuing(false);
+    }
   };
 
   const buildQuickMood = (emotionKey) => {
@@ -567,8 +574,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
   const selectQuickEmotion = async (emotionKey) => {
     const mood = buildQuickMood(emotionKey);
     onMoodDetected?.(mood);
-    await persistMoodLog(mood);
-    handleContinue(mood);
+    persistMoodLog(mood);
+    await handleContinue(mood);
   };
 
   const QuickEmotionPicker = () => {
@@ -667,6 +674,13 @@ export default function MoodInput({ userId = "", region = null, language = null,
   return (
     <div className="mi-root" dir={isRtl ? "rtl" : "ltr"}>
 
+      {continuing && (
+        <div className="mi-continuing-banner" role="status">
+          <span className="mi-continuing-spinner" aria-hidden="true" />
+          {tr('mood.continuing')}
+        </div>
+      )}
+
       <p className="mi-hook">{hookShort}</p>
 
       {!isPaidPlan(userPlan) && (
@@ -742,8 +756,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
               {detectedMood.confidence !== undefined && (
                 <p className="confidence-note">{tr('mood.confidence')}: {Math.round(detectedMood.confidence * 100)}%</p>
               )}
-              <button className="continue-btn" onClick={() => handleContinue(detectedMood)}>
-                {tr('mood.createMusic')}
+              <button className="continue-btn" onClick={() => handleContinue(detectedMood)} disabled={continuing}>
+                {continuing ? tr('mood.continuing') : tr('mood.createMusic')}
               </button>
             </div>
           )}
@@ -774,8 +788,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
               {textMood.confidence !== undefined && (
                 <p className="confidence-note">{tr('mood.confidence')}: {Math.round(textMood.confidence * 100)}%</p>
               )}
-              <button className="continue-btn" onClick={() => handleContinue(textMood)}>
-                {tr('mood.createMusic')}
+              <button className="continue-btn" onClick={() => handleContinue(textMood)} disabled={continuing}>
+                {continuing ? tr('mood.continuing') : tr('mood.createMusic')}
               </button>
             </div>
           )}
@@ -835,8 +849,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
             <div className="result-area">
               <MoodCard mood={quizMood} showValence />
               <button className="reset-btn" onClick={resetQuiz}>{tr('mood.retakeQuiz')}</button>
-              <button className="continue-btn" onClick={() => handleContinue(quizMood)}>
-                {tr('mood.createMusic')}
+              <button className="continue-btn" onClick={() => handleContinue(quizMood)} disabled={continuing}>
+                {continuing ? tr('mood.continuing') : tr('mood.createMusic')}
               </button>
             </div>
           )}
@@ -903,6 +917,19 @@ export default function MoodInput({ userId = "", region = null, language = null,
           color: #fff;
           border-color: #7c5ce7;
         }
+
+        .mi-continuing-banner {
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+          margin: 0 0 12px; padding: 12px 16px; border-radius: 12px;
+          background: rgba(124, 92, 231, 0.18); border: 1px solid rgba(124, 92, 231, 0.35);
+          font-size: 14px; font-weight: 600; color: #e9d5ff;
+        }
+        .mi-continuing-spinner {
+          width: 18px; height: 18px; border-radius: 50%;
+          border: 2px solid rgba(255,255,255,.2); border-top-color: #c084fc;
+          animation: miSpin .8s linear infinite;
+        }
+        @keyframes miSpin { to { transform: rotate(360deg); } }
 
         /* ── Tabs ── */
         .mi-tabs {

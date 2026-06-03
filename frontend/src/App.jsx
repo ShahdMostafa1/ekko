@@ -613,22 +613,30 @@ export default function App() {
     navigateTo('mood')
   }
 
-  const handleMoodSubmit = async (mood) => {
+  const handleMoodSubmit = (mood) => {
     setMoodData(mood)
     const sessionId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
     moodSessionIdRef.current = sessionId
     songSessionIdRef.current = null
-    if (userRef.current) await addXp('mood_shared', `mood_shared:${sessionId}`)
-    const trigger = mood.source === 'quiz' ? 'quiz_used' : 'mood_shared'
-    await tryClaimDailyChallenge(trigger)
-    const currentUser = userRef.current
-    if (currentUser) {
-      fetch(`${import.meta.env.VITE_API_URL}/rewards/checkin`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id }),
-      }).catch(err => console.warn('[ekko] Checkin failed silently:', err))
-    }
     navigateTo('cocreation')
+    ;(async () => {
+      if (userRef.current) {
+        try { await addXp('mood_shared', `mood_shared:${sessionId}`) } catch (e) {
+          console.warn('[ekko] mood XP failed:', e)
+        }
+      }
+      const trigger = mood.source === 'quiz' ? 'quiz_used' : 'mood_shared'
+      try { await tryClaimDailyChallenge(trigger) } catch (e) {
+        console.warn('[ekko] daily challenge failed:', e)
+      }
+      const currentUser = userRef.current
+      if (currentUser) {
+        fetch(`${import.meta.env.VITE_API_URL}/rewards/checkin`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: currentUser.id }),
+        }).catch(err => console.warn('[ekko] Checkin failed silently:', err))
+      }
+    })()
   }
 
   const handleCoCreate = async (params) => {

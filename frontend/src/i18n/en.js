@@ -104,6 +104,7 @@ export default {
     placeholder: 'I feel… / أنا أشعر… / Je me sens…',
     analyze: 'Analyze my mood',
     analyzing: 'Analysing…',
+    continuing: 'Opening co-create…',
     createMusic: 'Create my music →',
     quickPick: 'Or pick a mood',
     upgradeUnlock: '— upgrade to unlock',

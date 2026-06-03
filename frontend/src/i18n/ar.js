@@ -104,6 +104,7 @@ export default {
     placeholder: 'أنا حاسس… / أشعر… / I feel…',
     analyze: 'حلّل مزاجي',
     analyzing: 'جاري التحليل…',
+    continuing: 'جاري فتح التأليف…',
     createMusic: '← ابدأ الموسيقى',
     quickPick: 'أو اختار مزاجك مباشرة',
     upgradeUnlock: '— ترقية لفتح',
