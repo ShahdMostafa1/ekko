@@ -298,6 +298,17 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+### Signup emails and “email rate limit exceeded”
+
+Ekko uses **Supabase Auth** to send signup confirmation emails. On the **default (built-in) SMTP**, Supabase applies a **very low project-wide limit** (often about **2–4 emails per hour** for the whole app, not per user). Hitting that limit shows `email rate limit exceeded` when testers sign up or tap **Resend confirmation email**.
+
+**For thesis / group testing (pick one):**
+
+1. **Supabase Dashboard → Authentication → Rate Limits** — raise **Email sent** (e.g. 30–200/hour after you add custom SMTP).
+2. **Authentication → Providers → Email** — turn off **Confirm email** so sign-up does not send mail (users can sign in immediately). Easiest for many testers on one project.
+3. **Authentication → SMTP** — connect **Resend** (or SendGrid/Postmark) with your domain; built-in limits no longer apply. Default with custom SMTP is often **30/hour** until you raise it in Rate Limits.
+4. **Sign in with Google** — does not use the email quota.
+
 ---
 
 ## Run locally

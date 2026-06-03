@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { EKKO_TAGLINE, EKKO_HOOK } from '../utils/tagline'
+import { formatAuthError } from '../utils/authErrors'
 
 const PASSWORD_RULES = [
   { key: 'lower',   label: 'One lowercase letter (a–z)',   test: p => /[a-z]/.test(p) },
@@ -96,12 +97,7 @@ export default function AuthScreen({ onAuth }) {
       }
 
     } catch (err) {
-      const msg = err.message || ''
-      if (msg.toLowerCase().includes('password should contain')) {
-        setError('Please make sure your password meets all the requirements below.')
-      } else {
-        setError(msg)
-      }
+      setError(formatAuthError(err.message, mode === 'register' ? 'signup' : 'login'))
     } finally {
       setLoading(false)
     }
@@ -110,11 +106,14 @@ export default function AuthScreen({ onAuth }) {
   const handleResend = async () => {
     setResending(true)
     setResent(false)
+    setError(null)
     try {
-      await supabase.auth.resend({ type: 'signup', email })
+      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email })
+      if (resendError) throw resendError
       setResent(true)
     } catch (e) {
       console.error('Resend failed:', e)
+      setError(formatAuthError(e.message, 'resend'))
     } finally {
       setResending(false)
     }
@@ -141,7 +140,7 @@ export default function AuthScreen({ onAuth }) {
       if (resetError) throw resetError
       setResetSent(true)
     } catch (err) {
-      setError(err.message || 'Failed to send reset email. Please try again.')
+      setError(formatAuthError(err.message, 'reset'))
     } finally {
       setLoading(false)
     }
@@ -199,6 +198,16 @@ export default function AuthScreen({ onAuth }) {
           {resent && (
             <p style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600, margin: 0 }}>
               ✓ Confirmation email resent!
+            </p>
+          )}
+
+          {error && (
+            <p style={{
+              fontSize: 13, color: '#ff9b7a', margin: 0, lineHeight: 1.55,
+              background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.2)',
+              borderRadius: 10, padding: '10px 12px', textAlign: 'left',
+            }}>
+              {error}
             </p>
           )}
 
