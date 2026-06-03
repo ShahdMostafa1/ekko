@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useI18n } from '../i18n/I18nContext.jsx';
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
 import { proxiedAudioUrl, openAudioUrl, directSonautoUrl } from '../utils/audioProxy';
 import {
@@ -15,6 +16,7 @@ const POLL_INTERVAL_PRIORITY = 2500;
 const POLL_TIMEOUT  = 360000;
 
 export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free', onUpgrade }) {
+  const { t, isRtl } = useI18n();
   const audioRef     = useRef(null);
   const pollRef      = useRef(null);
   const pollStartRef = useRef(null);
@@ -23,7 +25,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const [audioUrl, setAudioUrl]         = useState(params?.audio_url || null);
   const [taskId]                        = useState(params?.task_id || null);
   const [polling, setPolling]           = useState(false);
-  const [pollStatus, setPollStatus]     = useState("Writing your song lyrics…");
+  const [pollStatus, setPollStatus]     = useState('');
   const [playing, setPlaying]           = useState(false);
   const [progress, setProgress]         = useState(0);
   const [duration, setDuration]         = useState(0);
@@ -93,6 +95,15 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     return () => clearTimeout(t);
   }, [playbackUrl, audioLoading]);
 
+  const pollStatusForElapsed = useCallback((elapsed) => {
+    if (isPriority && elapsed < 15) return t('player.priorityQueue');
+    if (elapsed < 15) return t('player.pollingLyrics');
+    if (elapsed < 30) return t('player.pollingMelody');
+    if (elapsed < 60) return t('player.pollingVocals');
+    if (elapsed < 120) return t('player.pollingMixing');
+    return t('player.pollingAlmost', { s: elapsed });
+  }, [t, isPriority]);
+
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
     if (audioUrl || !taskId || taskId === "mock") return;
@@ -103,15 +114,10 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       const elapsed = Math.round((Date.now() - pollStartRef.current) / 1000);
       if (elapsed * 1000 > POLL_TIMEOUT) {
         setPolling(false);
-        setPollStatus("Took too long. Please try again.");
+        setPollStatus(t('player.pollingTimeout'));
         return;
       }
-      if (isPriority && elapsed < 15) setPollStatus("Priority queue — writing lyrics…");
-      else if (elapsed < 15)       setPollStatus("Writing your song lyrics…");
-      else if (elapsed < 30)  setPollStatus("Composing the melody…");
-      else if (elapsed < 60)  setPollStatus("Recording vocals…");
-      else if (elapsed < 120) setPollStatus("Mixing the track…");
-      else                    setPollStatus(`Almost there… ${elapsed}s`);
+      setPollStatus(pollStatusForElapsed(elapsed));
 
       try {
         const res  = await fetch(`${import.meta.env.VITE_API_URL}/music/status/${taskId}`);
@@ -123,7 +129,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         }
         if (data.status === "FAILED") {
           setPolling(false);
-          setPollStatus(`Generation failed: ${data.error || "Unknown error"}`);
+          setPollStatus(t('player.pollFailed', { error: data.error || 'Unknown error' }));
           return;
         }
       } catch (err) {
@@ -134,7 +140,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
 
     pollRef.current = setTimeout(poll, isPriority ? 1200 : 2000);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [taskId, audioUrl, pollInterval, isPriority]);
+  }, [taskId, audioUrl, pollInterval, isPriority, t, pollStatusForElapsed]);
 
   // ── Save song once audio URL is ready ─────────────────────
   useEffect(() => {
@@ -173,7 +179,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     const el = audioRef.current;
     if (!el || !effectiveSrc) {
       setAudioLoading(false);
-      setAudioError("Could not load audio. Try opening in a new tab.");
+      setAudioError(t('player.audioError'));
       return;
     }
     // Safari sometimes fires error while still playing — ignore if buffer is OK
@@ -200,7 +206,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       return;
     }
     setAudioLoading(false);
-    setAudioError("Could not load audio. Try opening in a new tab.");
+    setAudioError(t('player.audioError'));
   };
 
   const togglePlay = async () => {
@@ -259,7 +265,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   // ── Generating screen ──────────────────────────────────────
   if (polling || (!audioUrl && taskId)) {
     return (
-      <div className="mp-card" style={s.card}>
+      <div className="mp-card" style={s.card} dir={isRtl ? 'rtl' : 'ltr'}>
         <div style={s.orb} />
         <p style={s.pollLabel}>{pollStatus}</p>
         {lyrics && (
@@ -279,8 +285,13 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
 
   if (!audioUrl) {
     return (
-      <div className="mp-card" style={s.card}>
+      <div className="mp-card" style={s.card} dir={isRtl ? 'rtl' : 'ltr'}>
         <p style={s.errorText}>{pollStatus || "No audio available."}</p>
+        {onDone && (
+          <button type="button" className="mp-done-btn" style={{ ...s.doneBtn, marginTop: 16 }} onClick={onDone}>
+            {t('player.doneSurvey')}
+          </button>
+        )}
         <style>{keyframes}</style>
       </div>
     );
@@ -288,7 +299,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
 
   // ── Player ─────────────────────────────────────────────────
   return (
-    <div className="mp-card" style={s.card}>
+    <div className="mp-card" style={s.card} dir={isRtl ? 'rtl' : 'ltr'}>
       <audio
         ref={audioRef}
         src={effectiveSrc || undefined}
@@ -313,7 +324,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
             {regionLabel}{language ? ` · ${language} lyrics` : ""}
           </p>
         </div>
-        {savedOk && <div style={s.savedBadge}>✓ Saved</div>}
+        {savedOk && <div style={s.savedBadge}>{t('player.saved')}</div>}
       </div>
 
       {/* Waveform bars — animated while playing */}
@@ -359,9 +370,9 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <p style={s.errorText}>{audioError}</p>
           <p style={{ ...s.subtitle, margin: 0, textAlign: "center" }}>
-            Playback failed on this device — you can still continue below.
+            {t('player.audioErrorMobile')}
           </p>
-          <a href={tabOpenUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>Open audio in new tab ↗</a>
+          <a href={tabOpenUrl || audioUrl} target="_blank" rel="noreferrer" style={s.openLink}>{t('player.openTab')}</a>
         </div>
       ) : (
         <button style={s.playBtn} onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
@@ -417,7 +428,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         </div>
       )}
 
-      {onDone && audioUrl && (
+      {onDone && (
         <button
           type="button"
           className="mp-done-btn"
@@ -428,7 +439,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
           }}
           onClick={onDone}
         >
-          Done — post-study survey →
+          {t('player.doneSurvey')}
         </button>
       )}
 
@@ -436,7 +447,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       {lyrics && (
         <div style={s.lyricsSection}>
           <button style={s.lyricsToggle} onClick={() => setShowLyrics(v => !v)}>
-            {showLyrics ? "▲ Hide lyrics" : "✍️ Show lyrics"}
+            {showLyrics ? `▲ ${t('player.hideLyrics')}` : `✍️ ${t('player.showLyrics')}`}
           </button>
           {showLyrics && (
             <div style={s.lyricsBox}>

@@ -2,6 +2,7 @@
  * LanguagePicker — shown after region selection, before mood input.
  * Lets the user choose which language they want the song lyrics in.
  */
+import { useI18n } from '../i18n/I18nContext.jsx'
 
 const REGION_LANGUAGES = {
   arabic: [
@@ -64,21 +65,23 @@ const REGION_COLOR = {
 }
 
 export default function LanguagePicker({ region, onComplete }) {
+  const { t, isRtl } = useI18n()
   const regionId  = region?.id || 'global'
+  const regionLabel = t(`onboarding.regions.${regionId}`)
   const langs     = REGION_LANGUAGES[regionId] || REGION_LANGUAGES.global
   const accentColor = REGION_COLOR[regionId] || '#7c5ce7'
 
   return (
-    <div className="lp-root">
+    <div className="lp-root" dir={isRtl ? 'rtl' : 'ltr'}>
       <div className="lp-header">
         <p className="lp-eyebrow">
-          {region?.emoji} {region?.label}
+          {region?.emoji} {regionLabel}
         </p>
         <h2 className="lp-headline">
-          What language for<br />your <em>song</em>?
+          {t('langPicker.title')}
         </h2>
         <p className="lp-sub">
-          Choose the language your lyrics will be written in.
+          {t('langPicker.sub')}
         </p>
       </div>
 
@@ -95,7 +98,7 @@ export default function LanguagePicker({ region, onComplete }) {
               <span className="lp-label">{lang.label}</span>
               <span className="lp-native">{lang.native}</span>
             </div>
-            <span className="lp-arrow">→</span>
+            <span className="lp-arrow">{isRtl ? '←' : '→'}</span>
           </button>
         ))}
       </div>

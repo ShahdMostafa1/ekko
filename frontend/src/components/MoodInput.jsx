@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { clampEmotionForPlan, isPaidPlan, dailyLimitFor } from '../utils/planUtils';
-import { EKKO_HOOK_SHORT } from '../utils/tagline';
+import { useI18n } from '../i18n/I18nContext.jsx';
 
 // ── Expanded Emotion → mood card mapping (7 core + 13 nuanced = 20 total) ─────
 const EMOTION_CARDS = {
@@ -249,7 +249,7 @@ const LANG_NAMES = {
 
 export default function MoodInput({ userId = "", region = null, language = null, userPlan = "free", onUpgrade, onMoodDetected, onSubmit }) {
   const [tab, setTab]                     = useState("voice");
-  const [lang, setLang]                   = useState("en");
+  const { locale, isRtl, hookShort, t: tr, setLocale } = useI18n();
   const [recording, setRecording]         = useState(false);
   const [voiceStatus, setVoiceStatus]     = useState("idle");
   const [transcript, setTranscript]       = useState("");
@@ -270,7 +270,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
   const [quizMood, setQuizMood]       = useState(null);
   const [dailyUsage, setDailyUsage]   = useState(null);
 
-  const isAr = lang === "ar";
+  const isAr = locale === "ar";
 
   const persistMoodLog = async (mood) => {
     if (!userId) return;
@@ -463,7 +463,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
       const data = await res.json();
       const finalTranscript = (data.transcript || speechHint || "").trim();
       const langCode = (data.language || language?.code || "").toLowerCase().split("-")[0];
-      if (langCode === "ar") setLang("ar");
+      if (langCode === "ar") setLocale("ar");
       const mood = buildMood({ ...data, transcript: finalTranscript }, finalTranscript);
       setDetectedMood(mood);
       setTranscript(finalTranscript);
@@ -669,31 +669,26 @@ export default function MoodInput({ userId = "", region = null, language = null,
   };
 
   return (
-    <div className="mi-root" dir={isAr ? "rtl" : "ltr"}>
+    <div className="mi-root" dir={isRtl ? "rtl" : "ltr"}>
 
-      <p className="mi-hook">{isAr ? 'شارك مزاجك — إيكو يحوّله لأغنية.' : EKKO_HOOK_SHORT}</p>
+      <p className="mi-hook">{hookShort}</p>
 
       {!isPaidPlan(userPlan) && (
         <div className="mi-plan-banner">
-          {isAr
-            ? `مجاني: 7 مزاج أساسي · ${dailyUsage?.used ?? 0}/${dailyUsage?.limit ?? dailyLimitFor(userPlan)} أغاني اليوم · Global Mix فقط`
-            : `Free: 7 core moods · ${dailyUsage?.used ?? 0}/${dailyUsage?.limit ?? dailyLimitFor(userPlan)} songs today · Global region only`}
+          {tr('mood.freeHint', {
+            used: dailyUsage?.used ?? 0,
+            limit: dailyUsage?.limit ?? dailyLimitFor(userPlan),
+          })}
         </div>
       )}
 
-      {/* ── Language toggle ── */}
-      <div className="mi-lang-toggle">
-        <button className={`lang-btn ${!isAr ? "active" : ""}`} onClick={() => setLang("en")}>EN</button>
-        <button className={`lang-btn ${isAr  ? "active" : ""}`} onClick={() => setLang("ar")}>ع</button>
-      </div>
-
       {/* ── Tab bar ── */}
       <div className="mi-tabs">
-        {["voice", "text", "quiz"].map((t) => (
-          <button key={t} className={`mi-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "voice" ? (isAr ? "🎙 صوت" : "🎙 Voice")
-              : t === "text" ? (isAr ? "✍️ نص"  : "✍️ Text")
-              : (isAr ? "🎯 اختبار" : "🎯 Quiz")}
+        {["voice", "text", "quiz"].map((tabId) => (
+          <button key={tabId} className={`mi-tab ${tab === tabId ? "active" : ""}`} onClick={() => setTab(tabId)}>
+            {tabId === "voice" ? tr('mood.tabVoice')
+              : tabId === "text" ? tr('mood.tabText')
+              : tr('mood.tabQuiz')}
           </button>
         ))}
       </div>

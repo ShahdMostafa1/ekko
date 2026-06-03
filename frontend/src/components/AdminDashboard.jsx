@@ -988,16 +988,16 @@ export default function AdminDashboard({ onExit }) {
                                   <td style={{ ...s.td, fontSize: 11, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
                                     {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
                                   </td>
-                                  <td style={s.td}>{sv.experience_rating ?? '—'}</td>
-                                  <td style={s.td}>{sv.ease_of_use ?? '—'}</td>
-                                  <td style={s.td}>{sv.mood_accuracy ?? '—'}</td>
-                                  <td style={s.td}>{sv.music_quality ?? '—'}</td>
-                                  <td style={s.td}>{sv.cultural_fit ?? '—'}</td>
-                                  <td style={s.td}>{sv.lyrics_quality ?? '—'}</td>
-                                  <td style={s.td}>{sv.cocreation_rating ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.experience_rating}>{labelFor('experience_rating', sv.experience_rating)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.ease_of_use}>{labelFor('ease_of_use', sv.ease_of_use)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.mood_accuracy}>{labelFor('mood_accuracy', sv.mood_accuracy)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.music_quality}>{labelFor('music_quality', sv.music_quality)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.cultural_fit}>{labelFor('cultural_fit', sv.cultural_fit)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.lyrics_quality}>{labelFor('lyrics_quality', sv.lyrics_quality)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.cocreation_rating}>{labelFor('cocreation_rating', sv.cocreation_rating)}</td>
                                   <td style={{ ...s.td, fontSize: 11 }}>{labelFor('expectations_met', sv.expectations_met)}</td>
-                                  <td style={s.td}>{sv.recommend_score ?? '—'}</td>
-                                  <td style={s.td}>{sv.would_use_again ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.recommend_score}>{labelFor('recommend_score', sv.recommend_score)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.would_use_again}>{labelFor('would_use_again', sv.would_use_again)}</td>
                                   <td style={{ ...s.td, fontSize: 11 }}>{labelFor('strongest_aspect', sv.strongest_aspect)}</td>
                                   <td style={{ ...s.td, fontSize: 11 }}>{labelFor('weakest_aspect', sv.weakest_aspect)}</td>
                                   <td style={{ ...s.td, fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
@@ -1009,13 +1009,13 @@ export default function AdminDashboard({ onExit }) {
                                     {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
                                   </td>
                                   <td style={s.td}>{labelFor('age_group', sv.age_group)}</td>
-                                  <td style={s.td}>{sv.music_frequency ?? '—'}</td>
-                                  <td style={s.td}>{sv.ai_familiarity ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.music_frequency}>{labelFor('music_frequency', sv.music_frequency)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.ai_familiarity}>{labelFor('ai_familiarity', sv.ai_familiarity)}</td>
                                   <td style={s.td}>{labelFor('used_mood_apps', sv.used_mood_apps)}</td>
                                   <td style={{ ...s.td, fontSize: 11 }}>{labelFor('primary_goal', sv.primary_goal)}</td>
-                                  <td style={s.td}>{sv.cultural_importance ?? '—'}</td>
-                                  <td style={s.td}>{sv.expected_mood_match ?? '—'}</td>
-                                  <td style={s.td}>{sv.expected_quality ?? '—'}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.cultural_importance}>{labelFor('cultural_importance', sv.cultural_importance)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.expected_mood_match}>{labelFor('expected_mood_match', sv.expected_mood_match)}</td>
+                                  <td style={{ ...s.td, fontSize: 11 }} title={sv.expected_quality}>{labelFor('expected_quality', sv.expected_quality)}</td>
                                   <td style={{ ...s.td, fontSize: 11, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={labelFor('genre_preferences', sv.genre_preferences)}>{labelFor('genre_preferences', sv.genre_preferences)}</td>
                                   <td style={{ ...s.td, fontSize: 11, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.loved_artists || ''}>{sv.loved_artists || '—'}</td>
                                   <td style={{ ...s.td, fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>

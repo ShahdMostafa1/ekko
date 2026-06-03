@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { EKKO_TAGLINE, EKKO_HOOK } from '../utils/tagline'
+import { useI18n } from '../i18n/I18nContext.jsx'
 import { formatAuthError } from '../utils/authErrors'
 
 const PASSWORD_RULES = [
@@ -12,6 +12,7 @@ const PASSWORD_RULES = [
 ]
 
 export default function AuthScreen({ onAuth }) {
+  const { t, tagline, hook, dir, locale, setLocale } = useI18n()
   const [mode, setMode]           = useState('login')
   const [email, setEmail]         = useState('')
   const [fullName, setFullName]   = useState('')
@@ -159,7 +160,7 @@ export default function AuthScreen({ onAuth }) {
   // ── Check your email screen ───────────────────────────────────────────
   if (awaitingConfirm) {
     return (
-      <div className="auth-shell" style={{
+      <div className="auth-shell" dir={dir} style={{
         width: '100%',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
@@ -170,10 +171,10 @@ export default function AuthScreen({ onAuth }) {
 
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
-              Check your email
+              {t('auth.checkEmail')}
             </h2>
             <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6 }}>
-              We sent a confirmation link to
+              {t('auth.sentConfirm')}
             </p>
             <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
               {email}
@@ -185,19 +186,15 @@ export default function AuthScreen({ onAuth }) {
             border: '1px solid rgba(124,92,231,0.15)',
             borderRadius: 12, padding: '14px 16px',
             fontSize: 13, color: 'var(--text3)', lineHeight: 1.7,
-            textAlign: 'left',
+            textAlign: dir === 'rtl' ? 'right' : 'left',
           }}>
-            <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>What to do:</p>
-            <p style={{ margin: 0 }}>
-              1. Open the email from Ekko<br />
-              2. Click the <strong style={{ color: 'var(--purple-l)' }}>Confirm your email</strong> link<br />
-              3. Come back here and sign in
-            </p>
+            <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>{t('auth.confirmStepsTitle')}</p>
+            <p style={{ margin: 0, whiteSpace: 'pre-line' }}>{t('auth.confirmSteps')}</p>
           </div>
 
           {resent && (
             <p style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600, margin: 0 }}>
-              ✓ Confirmation email resent!
+              {t('auth.resent')}
             </p>
           )}
 
@@ -217,7 +214,7 @@ export default function AuthScreen({ onAuth }) {
             disabled={resending}
             style={{ opacity: resending ? 0.6 : 1 }}
           >
-            {resending ? 'Sending…' : 'Resend confirmation email'}
+            {resending ? t('auth.pleaseWait') : t('auth.resend')}
           </button>
 
           <button
@@ -234,7 +231,7 @@ export default function AuthScreen({ onAuth }) {
               textDecoration: 'underline',
             }}
           >
-            Back to sign in
+            {t('auth.backSignIn')}
           </button>
         </div>
       </div>
@@ -344,18 +341,36 @@ export default function AuthScreen({ onAuth }) {
   const canSubmit = email && password && (mode === 'login' || (allPassed && fullName.trim().length > 0))
 
   return (
-    <div className="auth-shell" style={{
+    <div className="auth-shell" dir={dir} style={{
       width: '100%',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
     }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {(['en', 'ar']).map((code) => (
+          <button
+            key={code}
+            type="button"
+            onClick={() => setLocale(code)}
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
+              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+              background: locale === code ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.05)',
+              border: locale === code ? '1px solid rgba(124,92,231,.4)' : '1px solid rgba(255,255,255,.1)',
+              color: locale === code ? '#e0d8ff' : '#8b7eb8',
+            }}
+          >
+            {t(`lang.${code}`)}
+          </button>
+        ))}
+      </div>
       <div className="auth-logo">EKKO</div>
-      <p className="auth-tagline">{EKKO_TAGLINE}</p>
+      <p className="auth-tagline">{tagline}</p>
       <h1 className="auth-headline">
-        <em>{mode === 'login' ? 'Welcome back' : 'Start creating'}</em>
+        <em>{mode === 'login' ? t('auth.welcomeBack') : t('auth.startCreating')}</em>
       </h1>
-      <p className="auth-hook">{EKKO_HOOK}</p>
+      <p className="auth-hook">{hook}</p>
 
       <div className="auth-card">
         {/* Google */}
@@ -366,7 +381,7 @@ export default function AuthScreen({ onAuth }) {
             <path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.6 26.8 36.5 24 36.5c-5.2 0-9.6-3.5-11.2-8.3l-6.5 5C9.5 39.4 16.2 44 24 44z"/>
             <path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.2-4.3 5.5l6.2 5.2C41 34.9 44 29.9 44 24c0-1.3-.1-2.7-.4-4z"/>
           </svg>
-          Continue with Google
+          {t('auth.continueGoogle')}
         </button>
 
         <div className="auth-divider"><span>or</span></div>
@@ -376,7 +391,7 @@ export default function AuthScreen({ onAuth }) {
           <input
             className="auth-input"
             type="text"
-            placeholder="Full name"
+            placeholder={t('auth.fullName')}
             value={fullName}
             onChange={e => setFullName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
@@ -387,7 +402,7 @@ export default function AuthScreen({ onAuth }) {
         <input
           className="auth-input"
           type="email"
-          placeholder="Email"
+          placeholder={t('auth.email')}
           value={email}
           onChange={e => setEmail(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
@@ -398,7 +413,7 @@ export default function AuthScreen({ onAuth }) {
           <input
             className="auth-input"
             type={showPass ? 'text' : 'password'}
-            placeholder="Password"
+            placeholder={t('auth.password')}
             value={password}
             onChange={e => setPass(e.target.value)}
             onFocus={() => setPwFocused(true)}
@@ -449,7 +464,7 @@ export default function AuthScreen({ onAuth }) {
                 padding: 0,
               }}
             >
-              Forgot password?
+              {t('auth.forgotPassword')}
             </button>
           </div>
         )}
@@ -503,11 +518,11 @@ export default function AuthScreen({ onAuth }) {
           disabled={loading || !canSubmit}
           style={{ opacity: loading || !canSubmit ? 0.6 : 1 }}
         >
-          {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+          {loading ? t('auth.pleaseWait') : mode === 'login' ? t('auth.signIn') : t('auth.createAccount')}
         </button>
 
         <p className="auth-toggle">
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+          {mode === 'login' ? t('auth.noAccount') : t('auth.hasAccount')}
           <span onClick={() => {
             setMode(mode === 'login' ? 'register' : 'login')
             setError(null)
@@ -515,7 +530,7 @@ export default function AuthScreen({ onAuth }) {
             setFullName('')
             setPwFocused(false)
           }}>
-            {mode === 'login' ? 'Sign up' : 'Sign in'}
+            {mode === 'login' ? t('auth.signUp') : t('auth.signIn')}
           </span>
         </p>
       </div>

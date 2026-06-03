@@ -10,27 +10,24 @@ import { fetchSurveyStatus, patchSurveyStatusCache } from '../utils/tagline'
 
 const API = import.meta.env.VITE_API_URL
 
-function LikertRow({ label, scale, value, onChange }) {
-  const selected = scale.find(s => s.value === value)
+/** One question — vertical answer list tied to that question’s wording */
+function ScaleRow({ label, scale, value, onChange }) {
   return (
     <div className="ss-block">
       <span className="ss-label">{label}</span>
-      <div className="ss-likert" role="group" aria-label={label}>
-        {scale.map(({ value: v, label: lbl, hint }) => (
+      <div className="ss-options" role="group" aria-label={label}>
+        {scale.map(({ value: v, label: lbl }) => (
           <button
             key={v}
             type="button"
-            className={`ss-likert-btn ${value === v ? 'ss-likert-btn--on' : ''}`}
+            className={`ss-option ${value === v ? 'ss-option--on' : ''}`}
             onClick={() => onChange(v)}
-            title={hint}
             aria-pressed={value === v}
           >
-            <span className="ss-likert-num">{lbl}</span>
-            <span className="ss-likert-hint">{hint}</span>
+            {lbl}
           </button>
         ))}
       </div>
-      {selected && <p className="ss-likert-selected">{selected.hint}</p>}
     </div>
   )
 }
@@ -86,9 +83,9 @@ function MultiChipGroup({ label, options, value = [], onChange, min = 1 }) {
 
 function QuestionField({ q, form, setForm }) {
   const setVal = (key, val) => setForm(f => ({ ...f, [key]: val }))
-  if (q.type === 'likert') {
+  if (q.type === 'scale' || q.type === 'likert') {
     return (
-      <LikertRow
+      <ScaleRow
         label={q.label}
         scale={q.scale}
         value={form[q.key]}
@@ -296,8 +293,8 @@ export default function StudySurvey({
         <h1 className="ss-title">{isPre ? 'Before you begin' : 'After your session'}</h1>
         <p className="ss-sub">
           {isPre
-            ? 'Scales & taps about you and your taste — plus your favourite artists.'
-            : 'Rate your experience with Ekko. Only one optional text box at the end.'}
+            ? 'Pick answers that match each question — plus your favourite artists.'
+            : 'Choose the option that best describes your session. One optional text box at the end.'}
         </p>
       </div>
 
@@ -401,27 +398,6 @@ export default function StudySurvey({
         .ss-label { font-size: 13px; font-weight: 700; color: #c4b5f0; line-height: 1.45; }
         .ss-optional { font-weight: 500; color: #6b5f8a; font-size: 12px; }
         .ss-hint { font-size: 11px; color: #6b5f8a; margin: 0; }
-        .ss-likert { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-        .ss-likert-btn {
-          display: flex; flex-direction: column; align-items: center; gap: 4px;
-          padding: 10px 4px; border-radius: 10px;
-          background: rgba(255,255,255,.04);
-          border: 1.5px solid rgba(176,158,224,.12);
-          color: #8b7eb8; cursor: pointer; font-family: inherit;
-          transition: border-color .15s, background .15s, transform .12s;
-        }
-        .ss-likert-btn:hover { border-color: rgba(124,92,231,.4); transform: translateY(-1px); }
-        .ss-likert-btn--on {
-          background: rgba(124,92,231,.22);
-          border-color: rgba(168,85,247,.55);
-          color: #e0d8ff;
-        }
-        .ss-likert-num { font-size: 16px; font-weight: 800; line-height: 1; }
-        .ss-likert-hint {
-          font-size: 8px; font-weight: 600; text-transform: uppercase;
-          letter-spacing: .02em; opacity: .75; text-align: center; line-height: 1.2;
-        }
-        .ss-likert-selected { font-size: 11px; color: #a78bfa; margin: 0; font-weight: 600; }
         .ss-options { display: flex; flex-direction: column; gap: 8px; }
         .ss-option {
           text-align: left; padding: 12px 14px; border-radius: 12px;
@@ -474,8 +450,6 @@ export default function StudySurvey({
         @media (max-width: 480px) {
           .ss-root { max-width: 100%; }
           .ss-title { font-size: 1.3rem; }
-          .ss-likert-hint { display: none; }
-          .ss-likert-selected { display: block; }
         }
       `}</style>
     </div>

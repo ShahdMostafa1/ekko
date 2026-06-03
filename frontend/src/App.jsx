@@ -17,7 +17,8 @@ import DailyChallengeCTA   from './components/DailyChallengeCTA'
 import StudySurvey         from './components/StudySurvey'
 import { wasDailyChallengeDismissed, markDailyChallengeDismissed } from './utils/dailyChallenges'
 import { computeBadgeStats, getNewlyEarnedBadges, markBadgeAnnounced } from './utils/badges'
-import { EKKO_TAGLINE, EKKO_HOOK_SHORT, fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
+import { fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
+import { useI18n } from './i18n/I18nContext.jsx'
 import './App.css'
 
 
@@ -43,15 +44,15 @@ const REGION_DEFAULTS = {
   global:      { scale: 'C major', instruments: ['piano', 'strings'] },
 }
 
-const BACK_MAP = {
-  language:   { label: 'Change region'  },
-  mood:       { label: 'Change language' },
-  cocreation: { label: 'Change mood'     },
-  player:     { label: 'New mood'        },
-  history:    { label: 'Back'            },
-  rewards:    { label: 'Back'            },
-  plans:      { label: 'Back'            },
-  survey:     { label: 'Back'            },
+const BACK_SCREEN_KEYS = {
+  language:   'back.changeRegion',
+  mood:       'back.changeLanguage',
+  cocreation: 'back.changeMood',
+  player:     'back.newMood',
+  history:    'back.back',
+  rewards:    'back.back',
+  plans:      'back.back',
+  survey:     'back.back',
 }
 
 const ADMIN_EMAIL = 'admin@ekko.app'
@@ -118,6 +119,7 @@ function EkkoOrbLogo({ compact = false }) {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
+  const { t, tagline, hookShort } = useI18n()
   const [screen, setScreen]                       = useState('loading')
   const [user, setUser]                           = useState(null)
   const [userName, setUserName]                   = useState('')
@@ -169,6 +171,7 @@ export default function App() {
   }, [NO_STACK_SCREENS])
 
   const goBack = useCallback(() => {
+    if (surveyLocked) return
     if (screen === 'player') setMusicParams(null)
 
     const prev = navStackRef.current.pop()
@@ -379,30 +382,28 @@ export default function App() {
     scheduleDailyChallenge()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const goToPreSurvey = useCallback(() => {
+    setSurveyPhase('pre')
+    setSurveyLocked(true)
+    navigateTo('survey', { reset: true })
+  }, [])
+
   const routeAfterAuth = useCallback(async (authUser, profile) => {
     const status = await fetchSurveyStatus(authUser.id, { force: true })
     setSurveyStatus(status)
     patchSurveyStatusCache(authUser.id, status)
 
-    if (status.pre_done) {
-      if (screenRef.current === 'loading' || screenRef.current === 'auth') {
-        routeToAppHome(profile)
-      }
+    if (!status.pre_done) {
+      goToPreSurvey()
       scheduleDailyChallenge()
       return
     }
 
-    // Only force pre-survey on first entry — not when token refresh reloads profile mid-session
-    if (screenRef.current !== 'loading' && screenRef.current !== 'auth') {
-      scheduleDailyChallenge()
-      return
+    if (screenRef.current === 'loading' || screenRef.current === 'auth') {
+      routeToAppHome(profile)
     }
-
-    setSurveyPhase('pre')
-    setSurveyLocked(true)
-    navigateTo('survey', { reset: true })
     scheduleDailyChallenge()
-  }, [routeToAppHome])
+  }, [routeToAppHome, goToPreSurvey])
 
   const handleSurveyComplete = useCallback(async (phase) => {
     const userId = userRef.current?.id
@@ -419,7 +420,7 @@ export default function App() {
       return
     }
     setMusicParams(null)
-    navigateTo('mood')
+    navigateTo('mood', { reset: true })
   }, [routeToAppHome])
 
   const handleSurveyStatusChange = useCallback((status) => {
@@ -431,17 +432,17 @@ export default function App() {
   const goToPostSurvey = useCallback(async () => {
     const currentUser = userRef.current
     if (!currentUser) return
+    setMusicParams(null)
     const status = await fetchSurveyStatus(currentUser.id, { force: true })
     setSurveyStatus(status)
     patchSurveyStatusCache(currentUser.id, status)
     if (status.post_done) {
-      setMusicParams(null)
-      navigateTo('mood')
+      navigateTo('mood', { reset: true })
       return
     }
     setSurveyPhase('post')
     setSurveyLocked(true)
-    navigateTo('survey')
+    navigateTo('survey', { reset: true })
   }, [])
 
   useEffect(() => {
@@ -520,6 +521,13 @@ export default function App() {
       if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If pre-test is incomplete, keep user on the survey (no menu/logo bypass)
+  useEffect(() => {
+    if (!user?.id || !surveyStatus || surveyStatus.pre_done) return
+    if (['survey', 'loading', 'auth', 'admin'].includes(screen)) return
+    goToPreSurvey()
+  }, [user?.id, surveyStatus, screen, goToPreSurvey])
 
   const handleAuth = ({ user: authUser, profile }) => {
     setUser(authUser); userRef.current = authUser
@@ -645,6 +653,7 @@ export default function App() {
         onNavigate={async (dest) => {
           const VALID = ['mood','history','rewards','plans','survey','language','cocreation','player']
           if (!VALID.includes(dest)) return
+          if (surveyLocked && dest !== 'survey') return
           if (screen === 'player' && dest !== 'player') setMusicParams(null)
           if (dest === 'survey' && userRef.current?.id) {
             const st = await fetchSurveyStatus(userRef.current.id, { force: true })
@@ -680,7 +689,13 @@ export default function App() {
 
         <div
           className="ekko-logo"
-          onClick={() => navigateTo('mood', { reset: true })}
+          onClick={() => {
+            if (surveyLocked) {
+              navigateTo('survey', { reset: true })
+              return
+            }
+            navigateTo('mood', { reset: true })
+          }}
         >
           Ekko
           {region && (
@@ -698,9 +713,9 @@ export default function App() {
         : screen === 'onboarding' ? 'ekko-main ekko-main--onboarding'
         : 'ekko-main'
       }>
-        {screen !== 'onboarding' && screen !== 'generating' && BACK_MAP[screen] && !(screen === 'survey' && surveyLocked) && (
+        {screen !== 'onboarding' && screen !== 'generating' && BACK_SCREEN_KEYS[screen] && !(screen === 'survey' && surveyLocked) && (
           <div className="back-btn-wrap">
-            <BackButton onClick={goBack} label={BACK_MAP[screen]?.label} />
+            <BackButton onClick={goBack} label={t(BACK_SCREEN_KEYS[screen])} />
           </div>
         )}
 
@@ -709,8 +724,8 @@ export default function App() {
             <div className="onboarding-shell__logo">
               <EkkoOrbLogo compact />
               <div className="onboarding-shell__hook">
-                <p className="onboarding-tagline">{EKKO_TAGLINE}</p>
-                <p className="onboarding-hook">{EKKO_HOOK_SHORT}</p>
+                <p className="onboarding-tagline">{tagline}</p>
+                <p className="onboarding-hook">{hookShort}</p>
               </div>
             </div>
             <div className="onboarding-shell__picker">

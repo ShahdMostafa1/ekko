@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { isRegionUnlocked } from '../utils/planUtils'
+import { useI18n } from '../i18n/I18nContext.jsx'
 
 const REGIONS = [
   { id: 'arabic',      emoji: '🌙', label: 'Arabic',      desc: 'Maqam scales, oud, qanun',        color: '#c4954f', glow: 'rgba(196,149,79,0.35)'  },
@@ -15,6 +16,7 @@ const REGIONS = [
 const NOTES = ['♪', '♫', '♩', '♬', '𝄞', '♭', '♮']
 
 export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade }) {
+  const { t, isRtl } = useI18n()
   const [mounted, setMounted]       = useState(false)
   const [hovered, setHovered]       = useState(null)
   const [selected, setSelected]     = useState(null)
@@ -47,7 +49,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
   }
 
   return (
-    <div className="ob-root">
+    <div className="ob-root" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* ── Floating ambient notes ── */}
       <div className="ob-particles" aria-hidden="true">
         {particles.map(p => (
@@ -78,10 +80,10 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
         }}
       >
         <h1 className="ob-headline">
-          Where should your <em>sound</em> begin?
+          {t('onboarding.headline')}
         </h1>
         <p className="ob-sub">
-          <span className="ob-sub-accent">Choose a region — every song follows your mood and culture.</span>
+          <span className="ob-sub-accent">{t('onboarding.sub')}</span>
         </p>
       </div>
 
@@ -130,10 +132,10 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
               {/* Info */}
               <div className="ob-info">
                 <span className="ob-region-label">
-                  {r.label}{locked ? ' 🔒' : ''}
+                  {t(`onboarding.regions.${r.id}`)}{locked ? ' 🔒' : ''}
                 </span>
                 <span className="ob-region-desc">
-                  {locked ? 'Upgrade to Groove to unlock' : r.desc}
+                  {locked ? t('onboarding.upgradeUnlock') : t(`onboarding.regionDesc.${r.id}`)}
                 </span>
               </div>
 
@@ -147,7 +149,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
                   transition: 'transform .22s ease, opacity .22s ease',
                 }}
               >
-                →
+                {isRtl ? '←' : '→'}
               </span>
 
               {/* Active bar */}
@@ -169,7 +171,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
         }}
         onClick={() => handleSelect(REGIONS.find(r => r.id === 'global'))}
       >
-        Skip — use Global Mix
+        {t('onboarding.skip')}
       </p>
 
       <style>{`

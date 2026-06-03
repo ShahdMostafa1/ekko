@@ -1,15 +1,17 @@
 import { useEffect } from 'react'
+import { useI18n } from '../i18n/I18nContext.jsx'
 
 const NAV_ITEMS = [
-  { id: 'mood',    icon: '🎙', label: 'Create'   },
-  { id: 'history', icon: '🎵', label: 'Songs'    },
-  { id: 'rewards', icon: '🏅', label: 'Rewards'  },
-  { id: 'survey',  icon: '📋', label: 'Study'    },
-  { id: 'plans',   icon: '✨', label: 'Plans'    },
-  { id: 'billing', icon: '💳', label: 'Billing'  },
+  { id: 'mood',    icon: '🎙', labelKey: 'nav.create'   },
+  { id: 'history', icon: '🎵', labelKey: 'nav.songs'    },
+  { id: 'rewards', icon: '🏅', labelKey: 'nav.rewards'  },
+  { id: 'survey',  icon: '📋', labelKey: 'nav.study'    },
+  { id: 'plans',   icon: '✨', labelKey: 'nav.plans'    },
+  { id: 'billing', icon: '💳', labelKey: 'nav.billing'  },
 ]
 
 export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, onSignOut, userName, userEmail, xp, userPlan }) {
+  const { t, locale, setLocale, isRtl } = useI18n()
   // Close on Escape key
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
@@ -39,7 +41,15 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
     ? userName.trim()
     : userEmail
       ? userEmail.split('@')[0]
-      : 'Music Lover'
+      : t('nav.musicLover')
+
+  const planLabel = userPlan === 'groove' ? t('nav.planGroove')
+    : userPlan === 'studio' ? t('nav.planStudio')
+    : t('nav.planFree')
+
+  const panelSide = isRtl
+    ? { left: 'auto', right: 0, paddingLeft: 0, paddingRight: 'env(safe-area-inset-right)', borderRight: 'none', borderLeft: '1px solid rgba(124,92,231,.2)', boxShadow: open ? '-4px 0 48px rgba(0,0,0,.7)' : 'none', transform: open ? 'translateX(0)' : 'translateX(100%)' }
+    : { left: 0, right: 'auto', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 0, borderRight: '1px solid rgba(124,92,231,.2)', borderLeft: 'none', boxShadow: open ? '4px 0 48px rgba(0,0,0,.7)' : 'none', transform: open ? 'translateX(0)' : 'translateX(-100%)' }
 
   return (
     <>
@@ -57,16 +67,13 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
 
       {/* Sidebar panel */}
       <div style={{
-        position:   'fixed', top: 0, left: 0, bottom: 0,
+        position:   'fixed', top: 0, bottom: 0,
         width:      'min(270px, 85vw)', zIndex: 201,
-        paddingLeft: 'env(safe-area-inset-left)',
         background: 'linear-gradient(180deg, #0f0a24 0%, #130d2e 60%, #0a0718 100%)',
-        borderRight: '1px solid rgba(124,92,231,.2)',
-        boxShadow:  open ? '4px 0 48px rgba(0,0,0,.7)' : 'none',
-        transform:  open ? 'translateX(0)' : 'translateX(-100%)',
         transition: 'transform .28s cubic-bezier(.4,0,.2,1)',
         display:    'flex', flexDirection: 'column',
         overflowY:  'auto',
+        ...panelSide,
       }}>
 
         {/* Top bar: Ekko logo + close — matches header height so nothing is cut off */}
@@ -109,7 +116,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
             fontWeight: 700, letterSpacing: '.06em',
             fontFamily: "'Syne', sans-serif", textTransform: 'uppercase',
           }}>
-            Hello 👋
+            {t('nav.hello')}
           </p>
           <p style={{
             margin: '0 0 10px', fontSize: 19, fontWeight: 800,
@@ -132,9 +139,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
               borderRadius: 20, padding: '3px 10px',
               fontSize: 12, fontWeight: 700, color: '#34d399',
             }}>
-              {userPlan === 'groove' ? '🌊 Groove'
-               : userPlan === 'studio' ? '🎨 Studio'
-               : '🎧 Free'}
+              {planLabel}
             </div>
           </div>
 
@@ -155,7 +160,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
             color: '#4b4570', textTransform: 'uppercase', letterSpacing: '.1em',
             fontFamily: "'Syne', sans-serif",
           }}>
-            Navigate
+            {t('nav.navigate')}
           </p>
 
           {NAV_ITEMS.map(item => {
@@ -174,7 +179,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
                     ? '1px solid rgba(124,92,231,.4)'
                     : '1px solid transparent',
                   borderRadius: 12, cursor: 'pointer',
-                  transition: 'all .18s', textAlign: 'left',
+                  transition: 'all .18s', textAlign: isRtl ? 'right' : 'left',
                   fontFamily: "'DM Sans', sans-serif",
                 }}
                 onMouseEnter={e => {
@@ -198,11 +203,11 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
                   color: isActive ? '#e0d8ff' : '#8b7eb8',
                   transition: 'color .18s',
                 }}>
-                  {item.label}
+                  {t(item.labelKey)}
                 </span>
                 {isActive && (
                   <div style={{
-                    marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%',
+                    marginInlineStart: 'auto', width: 6, height: 6, borderRadius: '50%',
                     background: '#a855f7', boxShadow: '0 0 8px #a855f7',
                   }} />
                 )}
@@ -211,8 +216,37 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
           })}
         </nav>
 
-        {/* Sign out */}
+        {/* Language + sign out */}
         <div style={{ padding: '10px 10px 24px', borderTop: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
+          <p style={{
+            margin: '0 0 8px 8px', fontSize: 10, fontWeight: 700,
+            color: '#4b4570', textTransform: 'uppercase', letterSpacing: '.1em',
+            fontFamily: "'Syne', sans-serif",
+          }}>
+            {t('lang.label')}
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, padding: '0 4px' }}>
+            {(['en', 'ar']).map((code) => (
+              <button
+                key={code}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setLocale(code) }}
+                style={{
+                  flex: 1, padding: '9px 10px', borderRadius: 10, cursor: 'pointer',
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700,
+                  background: locale === code
+                    ? 'linear-gradient(135deg, rgba(124,92,231,.35), rgba(168,85,247,.2))'
+                    : 'rgba(255,255,255,.04)',
+                  border: locale === code
+                    ? '1px solid rgba(124,92,231,.45)'
+                    : '1px solid rgba(255,255,255,.08)',
+                  color: locale === code ? '#e0d8ff' : '#8b7eb8',
+                }}
+              >
+                {t(`lang.${code}`)}
+              </button>
+            ))}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); onSignOut?.(); onClose() }}
             style={{
@@ -235,7 +269,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
             }}
           >
             <span style={{ fontSize: 18 }}>👋</span>
-            Sign out
+            {t('nav.signOut')}
           </button>
         </div>
       </div>

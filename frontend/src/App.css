@@ -1527,3 +1527,20 @@ body {
   min-height: 100dvh;
   padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
 }
+
+/* ── RTL (Arabic UI) ─────────────────────────────────────── */
+html[dir="rtl"] .back-button:hover {
+  transform: translateX(2px);
+}
+html[dir="rtl"] .ob-region,
+html[dir="rtl"] .lp-item {
+  text-align: right;
+}
+html[dir="rtl"] .ob-region-bar {
+  left: auto;
+  right: 0;
+  border-radius: 3px 0 0 3px;
+}
+html[dir="rtl"] .auth-toggle span {
+  margin-inline-start: 4px;
+}
