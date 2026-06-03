@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { canUseArtistStyles } from '../utils/planUtils'
+import { isArtistStyleUnlocked, isPaidPlan, FREE_ARTISTS_PER_REGION } from '../utils/planUtils'
 
 const INSTRUMENTS = [
   { id: 'piano',   emoji: '🎹', label: 'Piano'   },
@@ -60,12 +60,18 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
     if (!artistRegion) return
     setLoadingStyles(true)
     setArtist('') // reset whenever language changes
-    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${artistRegion}`)
+    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${artistRegion}&plan=${encodeURIComponent(userPlan || 'free')}`)
       .then(r => r.json())
       .then(data => setArtistStyles(data.styles || []))
       .catch(() => setArtistStyles([]))
       .finally(() => setLoadingStyles(false))
-  }, [artistRegion])
+  }, [artistRegion, userPlan])
+
+  useEffect(() => {
+    if (!selectedArtist) return
+    const idx = artistStyles.findIndex(a => a.id === selectedArtist)
+    if (idx >= 0 && !isArtistStyleUnlocked(idx, userPlan)) setArtist('')
+  }, [artistStyles, userPlan, selectedArtist])
 
   const toggleInstr = (id) => {
     setInstr(prev =>
@@ -82,14 +88,16 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
     tempo < 130 ? 'Upbeat'    : 'Fast'
   )
 
-  const stylesLocked = !canUseArtistStyles(userPlan)
+  const paidPlan = isPaidPlan(userPlan)
 
   const handleGenerate = () => {
+    const idx = artistStyles.findIndex(a => a.id === selectedArtist)
+    const artistOk = !selectedArtist || isArtistStyleUnlocked(idx, userPlan)
     onGenerate({
       tempo_bpm:       tempo,
       scale:           selectedScale,
       instruments:     selectedInstr,
-      artist_style_id: stylesLocked ? '' : selectedArtist,
+      artist_style_id: artistOk ? selectedArtist : '',
     })
   }
 
@@ -117,16 +125,16 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
             {selectedArtistObj ? selectedArtistObj.label : 'Default style'}
           </span>
         </div>
-        {stylesLocked && (
+        {!paidPlan && (
           <p className="cc-lock-note">
-            🔒 Artist styles require Groove or Studio.{' '}
-            <button type="button" className="cc-upgrade-link" onClick={() => onUpgrade?.()}>Upgrade</button>
+            Free includes {FREE_ARTISTS_PER_REGION} artists per region.{' '}
+            <button type="button" className="cc-upgrade-link" onClick={() => onUpgrade?.()}>Unlock all with Groove</button>
           </p>
         )}
         {loadingStyles ? (
           <div className="cc-artist-loading">Loading styles…</div>
         ) : (
-          <div className={`cc-artist-grid ${stylesLocked ? 'cc-artist-grid--locked' : ''}`}>
+          <div className="cc-artist-grid">
             <button
               className={`cc-artist-opt ${selectedArtist === '' ? 'sel' : ''}`}
               onClick={() => setArtist('')}
@@ -135,17 +143,19 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
               <span className="cao-label">Default</span>
               <span className="cao-desc">AI chooses</span>
             </button>
-            {artistStyles.map(a => (
+            {artistStyles.map((a, idx) => {
+              const unlocked = a.unlocked ?? isArtistStyleUnlocked(idx, userPlan)
+              return (
               <button
                 key={a.id}
-                className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''} ${stylesLocked ? 'locked' : ''}`}
-                onClick={() => stylesLocked ? onUpgrade?.() : setArtist(a.id)}
+                className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''} ${unlocked ? '' : 'locked'}`}
+                onClick={() => unlocked ? setArtist(a.id) : onUpgrade?.()}
               >
-                <span className="cao-emoji">{stylesLocked ? '🔒' : '🎤'}</span>
+                <span className="cao-emoji">{unlocked ? '🎤' : '🔒'}</span>
                 <span className="cao-label">{a.label}</span>
                 <span className="cao-desc">{a.description}</span>
               </button>
-            ))}
+            )})}
           </div>
         )}
       </div>

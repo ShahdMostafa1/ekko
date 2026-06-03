@@ -49,6 +49,7 @@ _ALLOWED_AUDIO_HOST_SUFFIXES = (
 _task_audio_cache: dict[str, str] = {}
 
 # ── Plan limits (keep in sync with frontend/src/utils/planUtils.js) ─────────
+FREE_ARTISTS_PER_REGION = 2
 PLAN_DAILY_LIMITS = {
     "free":   5,
     "groove": 50,
@@ -462,10 +463,23 @@ def _clamp_emotion_for_plan(emotion: str, plan: str) -> str:
     return NUANCED_TO_CORE.get(emotion, "neutral")
 
 
+def _is_artist_allowed_for_plan(artist_style_id: str, plan: str) -> bool:
+    if not artist_style_id:
+        return True
+    if plan in ("groove", "studio"):
+        return True
+    for styles in ARTIST_STYLES.values():
+        for idx, style in enumerate(styles):
+            if style["id"] == artist_style_id:
+                return idx < FREE_ARTISTS_PER_REGION
+    return False
+
+
 def _apply_plan_restrictions(req: "GenerateRequest", plan: str) -> None:
     if plan in ("groove", "studio"):
         return
-    req.artist_style_id = ""
+    if req.artist_style_id and not _is_artist_allowed_for_plan(req.artist_style_id, plan):
+        req.artist_style_id = ""
     if req.region not in FREE_REGION_IDS:
         req.region = "global"
     req.emotion = _clamp_emotion_for_plan(req.emotion, plan)
@@ -661,11 +675,25 @@ class SaveSongRequest(BaseModel):
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+def _styles_with_unlock_flags(styles: list, plan: str) -> list:
+    paid = plan in ("groove", "studio")
+    out = []
+    for idx, style in enumerate(styles):
+        row = {**style, "unlocked": paid or idx < FREE_ARTISTS_PER_REGION}
+        out.append(row)
+    return out
+
+
 @router.get("/artist-styles", summary="List artist-style personas per region")
-async def list_artist_styles(region: str = ""):
+async def list_artist_styles(region: str = "", plan: str = "free"):
+    styles = ARTIST_STYLES.get(region, ARTIST_STYLES["global"]) if region else []
     if region:
-        return {"region": region, "styles": ARTIST_STYLES.get(region, ARTIST_STYLES["global"])}
-    return {"styles": ARTIST_STYLES}
+        return {
+            "region": region,
+            "styles": _styles_with_unlock_flags(styles, plan),
+            "free_limit": FREE_ARTISTS_PER_REGION,
+        }
+    return {"styles": ARTIST_STYLES, "free_limit": FREE_ARTISTS_PER_REGION}
 
 
 @router.post("/generate", summary="Generate lyrics + Sonauto song with artist style")

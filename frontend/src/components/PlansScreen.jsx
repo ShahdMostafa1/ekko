@@ -18,6 +18,7 @@ const PLANS = [
     features: [
       "5 song generations / day",
       "Basic moods & regions",
+      "2 artist styles per region",
       "Standard audio quality",
       "Last 10 songs in history",
     ],
@@ -38,7 +39,7 @@ const PLANS = [
       "All 7 regions & moods",
       "HD audio quality",
       "Full song history",
-      "Artist style selection",
+      "All artist styles (every region)",
       "Priority generation queue",
     ],
   },

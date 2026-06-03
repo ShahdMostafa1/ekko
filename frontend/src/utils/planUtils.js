@@ -26,8 +26,16 @@ export function isPaidPlan(plan) {
   return plan === 'groove' || plan === 'studio'
 }
 
+/** Free plan: first N artists per region list; Groove/Studio: all. */
+export const FREE_ARTISTS_PER_REGION = 2
+
 export function canUseArtistStyles(plan) {
-  return isPaidPlan(plan)
+  return true
+}
+
+export function isArtistStyleUnlocked(artistIndex, plan) {
+  if (isPaidPlan(plan)) return true
+  return artistIndex < FREE_ARTISTS_PER_REGION
 }
 
 export function canDownload(plan) {
