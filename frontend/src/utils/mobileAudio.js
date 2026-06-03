@@ -1,5 +1,7 @@
 /** Mobile (iOS Safari, Android Chrome/WebView) audio playback helpers. */
 
+import { directSonautoUrl, proxiedAudioUrl } from './audioProxy'
+
 export function isAndroid() {
   if (typeof navigator === 'undefined') return false
   return /Android/i.test(navigator.userAgent)
@@ -26,13 +28,35 @@ export function audioNeedsCrossOrigin() {
   }
 }
 
-/** Props for <audio> — playsInline (incl. legacy WebKit), preload tuned for Android. */
-export function mobileAudioElementProps() {
+/**
+ * Playback URLs in priority order.
+ * Android: direct Sonauto CDN first (no CORS fetch); iOS: API proxy first.
+ */
+export function playbackSourceChain(audioUrl, taskId) {
+  const direct = directSonautoUrl(audioUrl)
+  const proxy = proxiedAudioUrl(audioUrl, taskId)
+  const out = []
+  const add = (u) => { if (u && !out.includes(u)) out.push(u) }
+  if (isAndroid()) {
+    add(direct)
+    add(proxy)
+  } else if (isMobileBrowser()) {
+    add(proxy)
+    add(direct)
+  } else {
+    add(proxy)
+    add(direct)
+  }
+  return out
+}
+
+/** Props for <audio> — playsInline; crossOrigin only on iOS proxy (breaks many Android builds). */
+export function mobileAudioElementProps(useCrossOrigin = false) {
   const props = {
     playsInline: true,
-    preload: isAndroid() ? 'metadata' : isMobileBrowser() ? 'metadata' : 'auto',
+    preload: isMobileBrowser() ? 'auto' : 'auto',
   }
-  if (audioNeedsCrossOrigin()) {
+  if (useCrossOrigin && audioNeedsCrossOrigin() && isIOS()) {
     props.crossOrigin = 'anonymous'
   }
   return props
@@ -75,12 +99,18 @@ export function revokeBlobAudioUrl() {
  * Android fallback: fetch proxied stream into a blob URL (same CORS rules as <audio>).
  * Returns blob URL or null on failure.
  */
-/** Download proxied audio into a blob URL — reliable on iOS Safari and Android. */
-export async function fetchBlobAudioUrl(streamUrl) {
-  if (!streamUrl || !isMobileBrowser()) return null
+/** Download proxied audio into a blob URL — last resort after stream/CDN fail. */
+export async function fetchBlobAudioUrl(streamUrl, { timeoutMs = 45000 } = {}) {
+  if (!streamUrl) return null
   revokeBlobAudioUrl()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(streamUrl, { mode: 'cors', credentials: 'omit' })
+    const res = await fetch(streamUrl, {
+      mode: 'cors',
+      credentials: 'omit',
+      signal: controller.signal,
+    })
     if (!res.ok) return null
     const blob = await res.blob()
     if (!blob.size) return null
@@ -88,15 +118,19 @@ export async function fetchBlobAudioUrl(streamUrl) {
     return _blobUrl
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
 /** Configure a programmatic Audio() instance for mobile playback. */
 export function configureMobileAudio(audio, url) {
   if (!audio || !url) return audio
-  audio.preload = isAndroid() ? 'metadata' : 'auto'
-  if (audioNeedsCrossOrigin()) {
+  audio.preload = 'auto'
+  if (isIOS() && audioNeedsCrossOrigin()) {
     audio.crossOrigin = 'anonymous'
+  } else {
+    audio.removeAttribute('crossorigin')
   }
   applyAudioSource(audio, url)
   return audio

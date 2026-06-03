@@ -7,12 +7,12 @@ import {
   secondsRemaining,
   progressPercent,
 } from '../utils/generationProgress';
-import { proxiedAudioUrl, openAudioUrl, directSonautoUrl } from '../utils/audioProxy';
+import { proxiedAudioUrl, openAudioUrl } from '../utils/audioProxy';
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
-  isMobileBrowser,
   mobileAudioElementProps,
+  playbackSourceChain,
   playFromUserGesture,
   revokeBlobAudioUrl,
 } from '../utils/mobileAudio';
@@ -55,38 +55,32 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const waitEstimate = params?.estimated_wait_sec || ESTIMATED_WAIT_SEC;
   const pollRemaining = secondsRemaining(pollElapsed, waitEstimate);
   const pollProgress  = progressPercent(pollElapsed, waitEstimate);
-  const playbackUrl  = useMemo(() => proxiedAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
+  const sourceChain = useMemo(
+    () => playbackSourceChain(audioUrl, taskId),
+    [audioUrl, taskId],
+  );
+  const proxyUrl = useMemo(() => proxiedAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
   const tabOpenUrl   = useMemo(() => openAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
   const [srcOverride, setSrcOverride] = useState(null);
-  const effectiveSrc = srcOverride || playbackUrl;
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const effectiveSrc = srcOverride || sourceChain[sourceIndex] || null;
 
   useEffect(() => () => revokeBlobAudioUrl(), []);
 
   useEffect(() => {
     setSrcOverride(null);
+    setSourceIndex(0);
     revokeBlobAudioUrl();
     retryRef.current = 0;
-    if (!playbackUrl) return;
+    if (!sourceChain.length) return;
     setAudioLoading(true);
     setAudioError(null);
 
     let cancelled = false;
-    const prime = async () => {
-      if (isMobileBrowser()) {
-        const blobUrl = await fetchBlobAudioUrl(playbackUrl);
-        if (cancelled) return;
-        if (blobUrl) {
-          setSrcOverride(blobUrl);
-          setAudioLoading(false);
-          return;
-        }
-      }
-      const el = audioRef.current;
-      if (el && !cancelled) applyAudioSource(el, playbackUrl);
-    };
-    prime();
+    const el = audioRef.current;
+    if (el && !cancelled) applyAudioSource(el, sourceChain[0]);
     return () => { cancelled = true; };
-  }, [playbackUrl]);
+  }, [sourceChain]);
 
   useEffect(() => {
     if (!srcOverride) return;
@@ -100,10 +94,10 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   }, [srcOverride]);
 
   useEffect(() => {
-    if (!playbackUrl || !audioLoading) return;
+    if (!effectiveSrc || !audioLoading) return;
     const t = setTimeout(() => setAudioLoading(false), 20000);
     return () => clearTimeout(t);
-  }, [playbackUrl, audioLoading]);
+  }, [effectiveSrc, audioLoading]);
 
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
@@ -193,29 +187,32 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       setAudioError(t('player.audioError'));
       return;
     }
-    // Safari sometimes fires error while still playing — ignore if buffer is OK
     if (el.currentTime > 1 && !el.paused && el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       return;
     }
     retryRef.current += 1;
-    if (playbackUrl && !srcOverride && retryRef.current <= 2) {
-      const blobUrl = await fetchBlobAudioUrl(playbackUrl);
-      if (blobUrl) {
-        setSrcOverride(blobUrl);
-        setAudioError(null);
-        setAudioLoading(true);
-        return;
-      }
-    }
-    const direct = directSonautoUrl(audioUrl);
-    if (direct && effectiveSrc !== direct && retryRef.current <= 3) {
-      retryRef.current += 1;
-      setSrcOverride(null);
-      applyAudioSource(el, direct);
+
+    if (!srcOverride && sourceIndex < sourceChain.length - 1) {
+      const next = sourceIndex + 1;
+      setSourceIndex(next);
+      applyAudioSource(el, sourceChain[next]);
       setAudioError(null);
       setAudioLoading(true);
       return;
     }
+
+    const blobTarget = proxyUrl || sourceChain[sourceChain.length - 1];
+    if (blobTarget && !srcOverride && retryRef.current <= 3) {
+      const blobUrl = await fetchBlobAudioUrl(blobTarget);
+      if (blobUrl) {
+        setSrcOverride(blobUrl);
+        setAudioError(null);
+        setAudioLoading(true);
+        applyAudioSource(el, blobUrl);
+        return;
+      }
+    }
+
     setAudioLoading(false);
     setAudioError(t('player.audioError'));
   };
@@ -227,15 +224,6 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       el.pause();
       setPlaying(false);
       return;
-    }
-    if (isMobileBrowser() && playbackUrl && !srcOverride) {
-      setAudioLoading(true);
-      const blobUrl = await fetchBlobAudioUrl(playbackUrl);
-      if (blobUrl) {
-        setSrcOverride(blobUrl);
-        applyAudioSource(el, blobUrl);
-        setAudioLoading(false);
-      }
     }
     if (el.readyState < HTMLMediaElement.HAVE_METADATA && effectiveSrc) {
       applyAudioSource(el, effectiveSrc);
@@ -327,7 +315,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         onLoadedMetadata={onLoadedMetadata}
         onTimeUpdate={onTimeUpdate}
         onEnded={onEnded}
-        {...mobileAudioElementProps()}
+        {...mobileAudioElementProps(!!proxyUrl && effectiveSrc === proxyUrl)}
       />
 
       {/* Header */}

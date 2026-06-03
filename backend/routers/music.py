@@ -335,49 +335,58 @@ def _guess_audio_content_type(url: str, upstream: str | None) -> str:
 
 
 async def _proxy_audio_response(url: str, range_header: str | None = None) -> Response:
-    """Proxy audio through Ekko (buffered — reliable on Render; supports Range)."""
+    """Stream audio through Ekko with Range passthrough (Android needs 206 + bytes)."""
     url = _normalize_audio_url(url) or url
     if not _is_allowed_audio_url(url):
         raise HTTPException(400, f"Audio URL host not allowed: {_audio_url_host(url)}")
 
-    upstream_headers: dict[str, str] = {}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Ekko/1.0)",
+        "Accept": "audio/*,*/*;q=0.8",
+    }
     if range_header:
-        upstream_headers["Range"] = range_header
+        headers["Range"] = range_header
 
-    def _fetch():
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; Ekko/1.0)",
-            "Accept": "audio/*,*/*;q=0.8",
-        }
-        if upstream_headers:
-            headers.update(upstream_headers)
-        with httpx.Client(timeout=90.0, follow_redirects=True) as client:
-            return client.get(url, headers=headers)
-
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(90.0, connect=20.0),
+        follow_redirects=True,
+    )
     try:
-        res = await asyncio.to_thread(_fetch)
+        req = client.build_request("GET", url, headers=headers)
+        res = await client.send(req, stream=True)
         if res.status_code >= 400:
+            await res.aclose()
+            await client.aclose()
             raise HTTPException(502, f"Upstream audio error {res.status_code}")
+
+        content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
+        out_headers = {
+            "Cache-Control": "public, max-age=3600",
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": "inline",
+            "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+        }
+        for name in ("Content-Range", "Content-Length"):
+            if name in res.headers:
+                out_headers[name] = res.headers[name]
+
+        status = res.status_code if res.status_code in (200, 206) else 200
+
+        async def body():
+            try:
+                async for chunk in res.aiter_bytes(64 * 1024):
+                    yield chunk
+            finally:
+                await res.aclose()
+                await client.aclose()
+
+        return StreamingResponse(body(), status_code=status, media_type=content_type, headers=out_headers)
     except HTTPException:
+        await client.aclose()
         raise
     except Exception as e:
+        await client.aclose()
         raise HTTPException(502, f"Could not fetch audio: {e}") from e
-
-    content_type = _guess_audio_content_type(url, res.headers.get("content-type"))
-    out_headers = {
-        "Cache-Control": "public, max-age=3600",
-        "Accept-Ranges": "bytes",
-        "Content-Disposition": "inline",
-        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
-    }
-    for name in ("Content-Range", "Content-Length"):
-        if name in res.headers:
-            out_headers[name] = res.headers[name]
-    if "Content-Length" not in out_headers and res.content:
-        out_headers["Content-Length"] = str(len(res.content))
-
-    status = res.status_code if res.status_code in (200, 206) else 200
-    return Response(content=res.content, status_code=status, media_type=content_type, headers=out_headers)
 
 
 def _openrouter_headers() -> dict:
@@ -793,6 +802,8 @@ async def get_status(task_id: str):
 
     if state in ("SUCCESS", "COMPLETED", "COMPLETE", "DONE"):
         audio_url = _extract_audio_url(data)
+        if audio_url:
+            audio_url = _normalize_audio_url(audio_url) or audio_url
         if audio_url and not _is_allowed_audio_url(audio_url):
             print(f"[music] WARN success but URL host odd: {urlparse(audio_url).netloc} url={audio_url[:100]}")
         return {

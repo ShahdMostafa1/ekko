@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { applyHistoryLimit, canDownload } from '../utils/planUtils'
-import { proxiedAudioUrl, openAudioUrl } from '../utils/audioProxy'
+import { openAudioUrl } from '../utils/audioProxy'
 import {
   configureMobileAudio,
   fetchBlobAudioUrl,
-  isMobileBrowser,
+  playbackSourceChain,
   playFromUserGesture,
   revokeBlobAudioUrl,
 } from '../utils/mobileAudio'
@@ -111,7 +111,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
   const togglePlay = async (song) => {
     const songId = String(song.id)
-    const streamUrl = proxiedAudioUrl(song.audio_url, song.task_id)
+    const sources = playbackSourceChain(song.audio_url, song.task_id)
+    const streamUrl = sources[0]
     if (!streamUrl) return
 
     if (activeSongRef.current === songId && audioRef.current) {
@@ -127,10 +128,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     if (audioRef.current) clearActivePlayback(activeSongRef.current)
 
     let playSrc = streamUrl
-    if (isMobileBrowser()) {
-      const blobUrl = await fetchBlobAudioUrl(streamUrl)
-      if (blobUrl) playSrc = blobUrl
-    }
+    let sourceIdx = 0
 
     const audio = configureMobileAudio(new Audio(), playSrc)
     audioRef.current = audio
@@ -151,17 +149,26 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       if (audio.currentTime > 1 && !audio.paused && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         return
       }
-      if (playSrc !== streamUrl) {
-        clearActivePlayback(songId)
-        return
-      }
-      const blobUrl = await fetchBlobAudioUrl(streamUrl)
-      if (blobUrl) {
-        configureMobileAudio(audio, blobUrl)
+      if (sourceIdx < sources.length - 1) {
+        sourceIdx += 1
+        playSrc = sources[sourceIdx]
+        configureMobileAudio(audio, playSrc)
         if (await playFromUserGesture(audio)) {
           setIsPlaying(true)
           trackProgress(songId)
           return
+        }
+      }
+      const blobTarget = sources.find((u) => u.includes('/music/stream')) || sources[sources.length - 1]
+      if (blobTarget && !String(playSrc).startsWith('blob:')) {
+        const blobUrl = await fetchBlobAudioUrl(blobTarget)
+        if (blobUrl) {
+          configureMobileAudio(audio, blobUrl)
+          if (await playFromUserGesture(audio)) {
+            setIsPlaying(true)
+            trackProgress(songId)
+            return
+          }
         }
       }
       clearActivePlayback(songId)
@@ -173,15 +180,25 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       return
     }
 
-    if (playSrc === streamUrl && isMobileBrowser()) {
-      const blobUrl = await fetchBlobAudioUrl(streamUrl)
-      if (blobUrl) {
-        configureMobileAudio(audio, blobUrl)
-        if (await playFromUserGesture(audio)) {
-          setIsPlaying(true)
-          trackProgress(songId)
-          return
-        }
+    for (let i = 1; i < sources.length; i += 1) {
+      sourceIdx = i
+      playSrc = sources[i]
+      configureMobileAudio(audio, playSrc)
+      if (await playFromUserGesture(audio)) {
+        setIsPlaying(true)
+        trackProgress(songId)
+        return
+      }
+    }
+
+    const blobTarget = sources.find((u) => u.includes('/music/stream')) || sources[sources.length - 1]
+    const blobUrl = await fetchBlobAudioUrl(blobTarget)
+    if (blobUrl) {
+      configureMobileAudio(audio, blobUrl)
+      if (await playFromUserGesture(audio)) {
+        setIsPlaying(true)
+        trackProgress(songId)
+        return
       }
     }
     clearActivePlayback(songId)
