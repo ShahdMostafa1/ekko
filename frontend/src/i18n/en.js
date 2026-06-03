@@ -160,6 +160,8 @@ export default {
   generate: {
     label: 'Composing your music…',
     sub: 'Translating emotion into sound',
+    timeLeft: '~{s} sec left',
+    finishing: 'Almost ready…',
   },
 
   player: {
@@ -175,7 +177,8 @@ export default {
     pollingMelody: 'Composing the melody…',
     pollingVocals: 'Recording vocals…',
     pollingMixing: 'Mixing the track…',
-    pollingAlmost: 'Almost there… {s}s',
+    pollingFinishing: 'Almost ready…',
+    timeLeft: '~{s} sec left',
     pollingTimeout: 'Took too long. Please try again.',
     pollFailed: 'Generation failed: {error}',
     priorityQueue: 'Priority queue — writing lyrics…',

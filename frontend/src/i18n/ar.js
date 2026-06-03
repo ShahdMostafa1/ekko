@@ -160,6 +160,8 @@ export default {
   generate: {
     label: 'جاري تأليف موسيقاك…',
     sub: 'نحوّل شعورك إلى صوت',
+    timeLeft: '~{s} ث متبقية',
+    finishing: 'اقتربنا…',
   },
 
   player: {
@@ -175,7 +177,8 @@ export default {
     pollingMelody: 'تلحين اللحن…',
     pollingVocals: 'تسجيل الغناء…',
     pollingMixing: 'مزج المقطع…',
-    pollingAlmost: 'اقتربنا… {s} ث',
+    pollingFinishing: 'اقتربنا…',
+    timeLeft: '~{s} ث متبقية',
     pollingTimeout: 'استغرق وقتاً طويلاً. حاول مرة أخرى.',
     pollFailed: 'فشل التوليد: {error}',
     priorityQueue: 'أولوية — كتابة الكلمات…',

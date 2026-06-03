@@ -475,7 +475,19 @@ def _get_artist_style(region: str, artist_style_id: str) -> dict | None:
     return None
 
 
-# ── NEW: Title generator ──────────────────────────────────────────────────────
+def _quick_title(mood_label: str, emotion: str, lyrics: str) -> str:
+    """Title from lyrics — skips a second LLM call."""
+    for line in lyrics.split("\n"):
+        line = line.strip().strip("\"'")
+        if len(line) > 3:
+            words = line.split()
+            if len(words) >= 2:
+                return " ".join(words[:5])[:48]
+    base = (mood_label or emotion or "Your Mood Song").strip()
+    return base[:48] if base else "Your Mood Song"
+
+
+# ── Optional LLM title (unused on hot path) ───────────────────────────────────
 def _generate_title(mood_label: str, emotion: str, lyrics: str) -> str:
     system_msg = (
         "You are a professional music artist naming your new song. "
@@ -537,23 +549,23 @@ def _generate_lyrics(
         f"Mood: {val_word}, {en_word}\n\n"
         f"LANGUAGE (CRITICAL — write ONLY in this language):\n{lang_instr}\n\n"
         f"Rules:\n"
-        f"- 3 verses, each 3-4 lines, separated by blank lines.\n"
+        f"- 2 verses, each 2-3 lines, separated by one blank line.\n"
         f"- No explanations, no labels, just raw lyrics."
     )
 
-    for model in OPENROUTER_MODELS:
+    for model in OPENROUTER_MODELS[:2]:
         try:
             res = httpx.post(
                 OPENROUTER_URL,
                 headers=_openrouter_headers(),
                 json={
-                    "model": model, "max_tokens": 500,
+                    "model": model, "max_tokens": 280,
                     "messages": [
                         {"role": "system", "content": system_msg},
                         {"role": "user",   "content": user_msg},
                     ],
                 },
-                timeout=30,
+                timeout=18,
             )
             res.raise_for_status()
             content = res.json()["choices"][0]["message"]["content"]
@@ -706,8 +718,7 @@ async def generate_music(req: GenerateRequest):
     )
     print(f"[music] Lyrics:\n{lyrics}\n")
 
-    # ── Generate song title ───────────────────────────────────────────────
-    title = _generate_title(mood_label, req.emotion, lyrics)
+    title = _quick_title(mood_label, req.emotion, lyrics)
 
     style_prompt = _build_style_prompt(
         req.valence, req.energy, req.region, mood_label, artist_name, plan
@@ -758,8 +769,9 @@ async def generate_music(req: GenerateRequest):
         "status":           "GENERATING",
         "mock":             False,
         "plan":             plan,
-        "priority_queue":   plan in ("groove", "studio"),
-        "audio_quality":    "hd" if plan in ("groove", "studio") else "standard",
+        "priority_queue":     plan in ("groove", "studio"),
+        "audio_quality":      "hd" if plan in ("groove", "studio") else "standard",
+        "estimated_wait_sec": 90,
     }
 
 

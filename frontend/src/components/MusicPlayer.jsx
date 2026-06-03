@@ -1,6 +1,12 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useI18n } from '../i18n/I18nContext.jsx';
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
+import {
+  ESTIMATED_WAIT_SEC,
+  generationPhase,
+  secondsRemaining,
+  progressPercent,
+} from '../utils/generationProgress';
 import { proxiedAudioUrl, openAudioUrl, directSonautoUrl } from '../utils/audioProxy';
 import {
   applyAudioSource,
@@ -11,8 +17,8 @@ import {
   revokeBlobAudioUrl,
 } from '../utils/mobileAudio';
 
-const POLL_INTERVAL_FREE = 4000;
-const POLL_INTERVAL_PRIORITY = 2500;
+const POLL_INTERVAL_FREE = 1500;
+const POLL_INTERVAL_PRIORITY = 1000;
 const POLL_TIMEOUT  = 360000;
 
 export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free', onUpgrade }) {
@@ -26,6 +32,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const [taskId]                        = useState(params?.task_id || null);
   const [polling, setPolling]           = useState(false);
   const [pollStatus, setPollStatus]     = useState('');
+  const [pollElapsed, setPollElapsed]   = useState(0);
   const [playing, setPlaying]           = useState(false);
   const [progress, setProgress]         = useState(0);
   const [duration, setDuration]         = useState(0);
@@ -45,6 +52,9 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     ? POLL_INTERVAL_PRIORITY
     : POLL_INTERVAL_FREE;
   const isPriority   = pollInterval === POLL_INTERVAL_PRIORITY;
+  const waitEstimate = params?.estimated_wait_sec || ESTIMATED_WAIT_SEC;
+  const pollRemaining = secondsRemaining(pollElapsed, waitEstimate);
+  const pollProgress  = progressPercent(pollElapsed, waitEstimate);
   const playbackUrl  = useMemo(() => proxiedAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
   const tabOpenUrl   = useMemo(() => openAudioUrl(audioUrl, taskId), [audioUrl, taskId]);
   const [srcOverride, setSrcOverride] = useState(null);
@@ -95,20 +105,18 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     return () => clearTimeout(t);
   }, [playbackUrl, audioLoading]);
 
-  const pollStatusForElapsed = useCallback((elapsed) => {
-    if (isPriority && elapsed < 15) return t('player.priorityQueue');
-    if (elapsed < 15) return t('player.pollingLyrics');
-    if (elapsed < 30) return t('player.pollingMelody');
-    if (elapsed < 60) return t('player.pollingVocals');
-    if (elapsed < 120) return t('player.pollingMixing');
-    return t('player.pollingAlmost', { s: elapsed });
-  }, [t, isPriority]);
-
   // ── Poll for audio ────────────────────────────────────────
   useEffect(() => {
     if (audioUrl || !taskId || taskId === "mock") return;
     setPolling(true);
+    setPollElapsed(0);
     pollStartRef.current = Date.now();
+
+    const tickId = setInterval(() => {
+      const elapsed = Math.round((Date.now() - pollStartRef.current) / 1000);
+      setPollElapsed(elapsed);
+      setPollStatus(generationPhase(elapsed, isPriority, t));
+    }, 1000);
 
     const poll = async () => {
       const elapsed = Math.round((Date.now() - pollStartRef.current) / 1000);
@@ -117,7 +125,6 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         setPollStatus(t('player.pollingTimeout'));
         return;
       }
-      setPollStatus(pollStatusForElapsed(elapsed));
 
       try {
         const res  = await fetch(`${import.meta.env.VITE_API_URL}/music/status/${taskId}`);
@@ -138,9 +145,13 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       pollRef.current = setTimeout(poll, pollInterval);
     };
 
-    pollRef.current = setTimeout(poll, isPriority ? 1200 : 2000);
-    return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [taskId, audioUrl, pollInterval, isPriority, t, pollStatusForElapsed]);
+    setPollStatus(generationPhase(0, isPriority, t));
+    pollRef.current = setTimeout(poll, isPriority ? 500 : 800);
+    return () => {
+      clearInterval(tickId);
+      if (pollRef.current) clearTimeout(pollRef.current);
+    };
+  }, [taskId, audioUrl, pollInterval, isPriority, t]);
 
   // ── Save song once audio URL is ready ─────────────────────
   useEffect(() => {
@@ -264,10 +275,17 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
 
   // ── Generating screen ──────────────────────────────────────
   if (polling || (!audioUrl && taskId)) {
+    const timeHint = pollRemaining > 0
+      ? t('player.timeLeft', { s: pollRemaining })
+      : t('player.pollingFinishing');
     return (
       <div className="mp-card" style={s.card} dir={isRtl ? 'rtl' : 'ltr'}>
         <div style={s.orb} />
         <p style={s.pollLabel}>{pollStatus}</p>
+        <p style={s.pollCountdown}>{timeHint}</p>
+        <div style={s.genProgressTrack}>
+          <div style={{ ...s.genProgressFill, width: `${pollProgress}%` }} />
+        </div>
         {lyrics && (
           <div style={s.lyricsPreview}>
             <p style={s.lyricsPreviewLabel}>✍️ Lyrics written</p>
@@ -487,6 +505,19 @@ const s = {
     animation: "orbPulse 2s ease-in-out infinite",
   },
   pollLabel:  { margin: 0, fontSize: 16, fontWeight: 700, textAlign: "center" },
+  pollCountdown: {
+    margin: 0, fontSize: 14, fontWeight: 600, textAlign: "center",
+    color: "rgba(196,132,252,.95)", fontVariantNumeric: "tabular-nums",
+  },
+  genProgressTrack: {
+    width: "100%", height: 6, borderRadius: 3,
+    background: "rgba(255,255,255,.12)", overflow: "hidden",
+  },
+  genProgressFill: {
+    height: "100%", borderRadius: 3,
+    background: "linear-gradient(90deg,#7c5ce7,#c084fc)",
+    transition: "width .8s ease-out",
+  },
   pollSub:    { margin: 0, fontSize: 12, color: "rgba(255,255,255,.5)", textAlign: "center" },
   dots:       { display: "flex", gap: 6 },
   dot: {

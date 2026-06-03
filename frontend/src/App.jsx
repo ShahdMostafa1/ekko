@@ -19,6 +19,13 @@ import { wasDailyChallengeDismissed, markDailyChallengeDismissed } from './utils
 import { computeBadgeStats, getNewlyEarnedBadges, markBadgeAnnounced } from './utils/badges'
 import { fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
 import { useI18n } from './i18n/I18nContext.jsx'
+import {
+  ESTIMATED_WAIT_SEC,
+  generationPhase,
+  secondsRemaining,
+  progressPercent,
+} from './utils/generationProgress'
+import { hasPriorityQueue } from './utils/planUtils'
 import { ADMIN_EMAIL } from './utils/adminAuth'
 import './App.css'
 
@@ -136,8 +143,10 @@ export default function App() {
   const [surveyLocked, setSurveyLocked]             = useState(false)
   const [surveyStatus, setSurveyStatus]             = useState(null)
   const [surveyGateNotice, setSurveyGateNotice]     = useState('')
+  const [genElapsed, setGenElapsed]                 = useState(0)
 
   const regionXpAwardedRef = useRef(false)
+  const genStartRef        = useRef(null)
   const surveyGateTimerRef = useRef(null)
   const moodSessionIdRef   = useRef(null)
   const songSessionIdRef   = useRef(null)
@@ -245,6 +254,21 @@ export default function App() {
   useEffect(() => { regionRef.current   = region    }, [region])
   useEffect(() => { languageRef.current = language  }, [language])
   useEffect(() => { userRef.current     = user      }, [user])
+
+  useEffect(() => {
+    if (screen !== 'generating') {
+      setGenElapsed(0)
+      genStartRef.current = null
+      return
+    }
+    genStartRef.current = Date.now()
+    setGenElapsed(0)
+    const id = setInterval(() => {
+      if (!genStartRef.current) return
+      setGenElapsed(Math.round((Date.now() - genStartRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [screen])
 
   const showReward = (label, sub) => {
     setReward({ label, sub })
@@ -787,13 +811,25 @@ export default function App() {
           />
         )}
 
-        {screen === 'generating' && (
-          <div className="generating-screen">
-            <div className="gen-orb" />
-            <p className="gen-label">{t('generate.label')}</p>
-            <p className="gen-sub">{t('generate.sub')}</p>
-          </div>
-        )}
+        {screen === 'generating' && (() => {
+          const genRemaining = secondsRemaining(genElapsed, ESTIMATED_WAIT_SEC)
+          const genProgress = progressPercent(genElapsed, ESTIMATED_WAIT_SEC)
+          const genPhase = generationPhase(genElapsed, hasPriorityQueue(userPlan), t)
+          const genTimeHint = genRemaining > 0
+            ? t('generate.timeLeft', { s: genRemaining })
+            : t('generate.finishing')
+          return (
+            <div className="generating-screen">
+              <div className="gen-orb" />
+              <p className="gen-label">{genPhase}</p>
+              <p className="gen-countdown">{genTimeHint}</p>
+              <div className="gen-progress-track">
+                <div className="gen-progress-fill" style={{ width: `${genProgress}%` }} />
+              </div>
+              <p className="gen-sub">{t('generate.sub')}</p>
+            </div>
+          )
+        })()}
 
         {screen === 'player' && musicParams && (
           <div className="player-screen">

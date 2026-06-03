@@ -405,6 +405,19 @@ body {
   color: var(--text); letter-spacing: -.01em;
 }
 .gen-sub { font-size: 13px; color: var(--text3); }
+.gen-countdown {
+  font-size: 15px; font-weight: 600; color: var(--accent, #a78bfa);
+  font-variant-numeric: tabular-nums; margin: 0;
+}
+.gen-progress-track {
+  width: min(280px, 88vw); height: 6px; border-radius: 3px;
+  background: rgba(124, 92, 231, .2); overflow: hidden;
+}
+.gen-progress-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent, #7c5ce7), #c084fc);
+  transition: width .8s ease-out;
+}
 
 /* ── Player screen ───────────────────────────────────────── */
 .player-screen { animation: fadeUp .35s ease; width: 100%; }
