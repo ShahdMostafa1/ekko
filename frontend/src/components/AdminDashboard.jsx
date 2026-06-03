@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { labelFor } from '../utils/surveyQuestions'
-
-// ── Admin credentials (change these) ─────────────────────────────────────────
-const ADMIN_EMAIL    = 'admin@ekko.app'
-const ADMIN_PASSWORD = 'EkkoAdmin2026!'
-const API            = import.meta.env.VITE_API_URL
+import {
+  ADMIN_EMAIL,
+  adminApiFetch,
+  getAdminSession,
+  signInAdmin,
+} from '../utils/adminAuth'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const REGION_COLORS = {
@@ -116,13 +117,16 @@ function AdminLogin({ onLogin }) {
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setError('')
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      setLoading(true)
-      setTimeout(() => onLogin(), 600)
-    } else {
-      setError('Invalid admin credentials.')
+    setLoading(true)
+    try {
+      await signInAdmin(email, password)
+      onLogin()
+    } catch (e) {
+      setError(e.message || 'Invalid admin credentials.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -164,6 +168,7 @@ function AdminLogin({ onLogin }) {
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function AdminDashboard({ onExit }) {
   const [authed, setAuthed]       = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const [tab, setTab]             = useState('overview')
   const [loading, setLoading]     = useState(false)
   const [lastRefresh, setRefresh] = useState(null)
@@ -198,9 +203,7 @@ export default function AdminDashboard({ onExit }) {
 
       let moodRows = []
       try {
-        const mr = await fetch(`${API}/admin/mood-logs`, {
-          headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
-        })
+        const mr = await adminApiFetch('/admin/mood-logs')
         const md = await mr.json().catch(() => ({}))
         if (mr.ok) moodRows = md.mood_logs || []
         else console.error('Admin mood-logs API:', mr.status, md)
@@ -230,9 +233,7 @@ export default function AdminDashboard({ onExit }) {
       let warning = ''
 
       try {
-        const sr = await fetch(`${API}/admin/surveys`, {
-          headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
-        })
+        const sr = await adminApiFetch('/admin/surveys')
         const sd = await sr.json().catch(() => ({}))
         if (sr.ok) {
           loadedSurveys = sd.surveys || []
@@ -275,6 +276,12 @@ export default function AdminDashboard({ onExit }) {
   }, [])
 
   useEffect(() => {
+    getAdminSession()
+      .then(session => { if (session) setAuthed(true) })
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  useEffect(() => {
     if (authed) loadData()
   }, [authed, loadData])
 
@@ -296,6 +303,13 @@ export default function AdminDashboard({ onExit }) {
     },
   }), [postSurveys, preSurveys])
 
+  if (!authChecked) {
+    return (
+      <div style={s.loginWrap}>
+        <p style={{ color: '#8b7eb8', fontFamily: 'DM Sans,sans-serif' }}>Checking session…</p>
+      </div>
+    )
+  }
   if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />
 
   // ── Enriched user rows ──────────────────────────────────────────────────────
@@ -380,10 +394,7 @@ export default function AdminDashboard({ onExit }) {
       return
     }
     try {
-      const res = await fetch(`${API}/admin/users/${u.id}`, {
-        method: 'DELETE',
-        headers: { 'X-Admin-Secret': ADMIN_PASSWORD },
-      })
+      const res = await adminApiFetch(`/admin/users/${u.id}`, { method: 'DELETE' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
       setProfiles(prev => prev.filter(p => p.id !== u.id))

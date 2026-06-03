@@ -1528,6 +1528,46 @@ body {
   padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
 }
 
+/* ── Survey gate notice ──────────────────────────────────── */
+.ekko-survey-gate {
+  position: fixed;
+  left: 50%;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 250;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 14px 18px;
+  background: linear-gradient(135deg, rgba(30, 20, 60, 0.97), rgba(20, 14, 45, 0.98));
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  animation: ekkoSurveyGateIn 0.28s ease;
+}
+.ekko-survey-gate__icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ekko-survey-gate__text {
+  margin: 0;
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0d8ff;
+  line-height: 1.5;
+}
+@keyframes ekkoSurveyGateIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+html[dir="rtl"] .ekko-survey-gate {
+  text-align: right;
+}
+
 /* ── RTL (Arabic UI) ─────────────────────────────────────── */
 html[dir="rtl"] .back-button:hover {
   transform: translateX(2px);

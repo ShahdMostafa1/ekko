@@ -14,12 +14,39 @@ from routers.survey import list_local_surveys
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "EkkoAdmin2026!")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@ekko.app")
+# Server-only fallback for scripts; never embed in frontend bundles.
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
 
 
-def _require_admin(x_admin_secret: str | None) -> None:
-    if not x_admin_secret or x_admin_secret != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Admin access denied")
+def _user_from_bearer(authorization: str | None) -> str | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:].strip()
+    if not token:
+        return None
+    sb = _get_supabase_admin()
+    if not sb:
+        return None
+    try:
+        res = sb.auth.get_user(token)
+        user = getattr(res, "user", None) or (res.get("user") if isinstance(res, dict) else None)
+        email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
+        return email
+    except Exception:
+        return None
+
+
+def _require_admin(
+    x_admin_secret: str | None = None,
+    authorization: str | None = None,
+) -> None:
+    email = _user_from_bearer(authorization)
+    if email and email.lower() == ADMIN_EMAIL.lower():
+        return
+    if ADMIN_SECRET and x_admin_secret and x_admin_secret == ADMIN_SECRET:
+        return
+    raise HTTPException(status_code=403, detail="Admin access denied")
 
 
 def _get_supabase_admin():
@@ -53,8 +80,12 @@ def _delete_user_data(sb, user_id: str) -> dict[str, int]:
 
 
 @router.delete("/users/{user_id}", summary="Permanently delete a user and all data")
-async def delete_user(user_id: str, x_admin_secret: str = Header(..., alias="X-Admin-Secret")):
-    _require_admin(x_admin_secret)
+async def delete_user(
+    user_id: str,
+    x_admin_secret: str | None = Header(None, alias="X-Admin-Secret"),
+    authorization: str | None = Header(None),
+):
+    _require_admin(x_admin_secret, authorization)
     sb = _get_supabase_admin()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not configured")
@@ -92,8 +123,11 @@ async def delete_user(user_id: str, x_admin_secret: str = Header(..., alias="X-A
 
 
 @router.get("/surveys", summary="List all pre/post study survey responses")
-async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")):
-    _require_admin(x_admin_secret)
+async def list_surveys(
+    x_admin_secret: str | None = Header(None, alias="X-Admin-Secret"),
+    authorization: str | None = Header(None),
+):
+    _require_admin(x_admin_secret, authorization)
     sb = _get_supabase_admin()
     if not sb:
         local = list_local_surveys()
@@ -146,8 +180,11 @@ async def list_surveys(x_admin_secret: str = Header(..., alias="X-Admin-Secret")
 
 
 @router.get("/mood-logs", summary="List all mood log entries (service role)")
-async def list_mood_logs(x_admin_secret: str = Header(..., alias="X-Admin-Secret")):
-    _require_admin(x_admin_secret)
+async def list_mood_logs(
+    x_admin_secret: str | None = Header(None, alias="X-Admin-Secret"),
+    authorization: str | None = Header(None),
+):
+    _require_admin(x_admin_secret, authorization)
     sb = _get_supabase_admin()
     if not sb:
         return {"mood_logs": [], "warning": "SUPABASE_URL or service key missing on backend."}

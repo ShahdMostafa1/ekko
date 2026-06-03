@@ -247,9 +247,16 @@ const LANG_NAMES = {
   ko:"Korean", ru:"Russian", it:"Italian", bn:"Bengali", ta:"Tamil", te:"Telugu",
 };
 
+const LANG_NAMES_AR = {
+  ar:"عربي", en:"إنجليزي", fr:"فرنسي", es:"إسباني", de:"ألماني", hi:"هندي",
+  ne:"نيبالي", tr:"تركي", pt:"برتغالي", zh:"صيني", ja:"ياباني",
+  ko:"كوري", ru:"روسي", it:"إيطالي", bn:"بنغالي", ta:"تاميل", te:"تيلوجو",
+  yo:"يوروبا", ha:"هوسا", wo:"ولوف", pcm:"بيدجن نيجيري",
+};
+
 export default function MoodInput({ userId = "", region = null, language = null, userPlan = "free", onUpgrade, onMoodDetected, onSubmit }) {
   const [tab, setTab]                     = useState("voice");
-  const { locale, isRtl, hookShort, t: tr, setLocale } = useI18n();
+  const { locale, isRtl, hookShort, t: tr } = useI18n();
   const [recording, setRecording]         = useState(false);
   const [voiceStatus, setVoiceStatus]     = useState("idle");
   const [transcript, setTranscript]       = useState("");
@@ -271,6 +278,13 @@ export default function MoodInput({ userId = "", region = null, language = null,
   const [dailyUsage, setDailyUsage]   = useState(null);
 
   const isAr = locale === "ar";
+  const cardLabel = (card) => (isAr ? card.labelAr : card.label);
+  const cardTags = (card) => (isAr ? card.tagsAr : card.tags);
+  const langDisplay = (code) => {
+    if (!code) return "";
+    const names = isAr ? LANG_NAMES_AR : LANG_NAMES;
+    return names[code] || code.toUpperCase();
+  };
 
   const persistMoodLog = async (mood) => {
     if (!userId) return;
@@ -528,8 +542,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
   const handleContinue = (mood) => {
     const planned = applyPlanToMood(mood);
     onSubmit?.({
-      label:   isAr ? planned.labelAr : planned.label,
-      tags:    isAr ? planned.tagsAr  : planned.tags,
+      label:   cardLabel(planned),
+      tags:    cardTags(planned),
       valence: planned.valence, energy: planned.energy,
       emotion: clampEmotionForPlan(planned.nuancedKey || planned.emotion, userPlan),
       text: planned.text || planned.label,
@@ -546,7 +560,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
       nuancedKey: emotionKey,
       valence: defaults.valence,
       energy: defaults.energy,
-      text: isAr ? card.labelAr : card.label,
+      text: cardLabel(card),
     });
   };
 
@@ -563,9 +577,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
 
     return (
       <div className="mi-quick-emotions">
-        <p className="mi-quick-label">
-          {isAr ? "أو اختار مزاجك مباشرة" : "Or pick a mood"}
-        </p>
+        <p className="mi-quick-label">{tr('mood.quickPick')}</p>
         <div className="mi-emotion-circles">
           {unlockedKeys.map((key) => {
             const card = EMOTION_CARDS[key];
@@ -576,8 +588,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
                 className="mi-emotion-circle"
                 style={{ "--ec": card.color }}
                 onClick={() => selectQuickEmotion(key)}
-                title={isAr ? card.labelAr : card.label}
-                aria-label={isAr ? card.labelAr : card.label}
+                title={cardLabel(card)}
+                aria-label={cardLabel(card)}
               >
                 <span className="mi-emotion-emoji">{card.emoji}</span>
               </button>
@@ -592,8 +604,8 @@ export default function MoodInput({ userId = "", region = null, language = null,
                 className="mi-emotion-circle mi-emotion-circle--locked"
                 style={{ "--ec": card.color }}
                 onClick={() => onUpgrade?.()}
-                title={isAr ? `${card.labelAr} — ترقية لفتح` : `${card.label} — upgrade to unlock`}
-                aria-label={isAr ? `${card.labelAr} — مقفول` : `${card.label} — locked`}
+                title={`${cardLabel(card)}${tr('mood.upgradeUnlock')}`}
+                aria-label={`${cardLabel(card)}${tr('mood.locked')}`}
               >
                 <span className="mi-emotion-emoji mi-emotion-emoji--dim" aria-hidden="true">{card.emoji}</span>
                 <span className="mi-emotion-lock" aria-hidden="true">🔒</span>
@@ -603,22 +615,13 @@ export default function MoodInput({ userId = "", region = null, language = null,
         </div>
         {!paid && (
           <p className="mi-quick-unlock">
-            {isAr ? (
-              <>
-                +{NUANCED_EMOTION_KEYS.length} مزاج إضافي مقفول.{' '}
-                <button type="button" className="mi-upgrade-link" onClick={() => onUpgrade?.()}>
-                  ترقية إلى Groove أو Studio
-                </button>
-              </>
-            ) : (
-              <>
-                +{NUANCED_EMOTION_KEYS.length} nuanced moods locked.{' '}
-                <button type="button" className="mi-upgrade-link" onClick={() => onUpgrade?.()}>
-                  Upgrade to Groove or Studio
-                </button>
-                {' '}to unlock the rest.
-              </>
-            )}
+            <>
+              {tr('mood.nuancedLocked', { count: NUANCED_EMOTION_KEYS.length })}{' '}
+              <button type="button" className="mi-upgrade-link" onClick={() => onUpgrade?.()}>
+                {tr('mood.upgradeCta')}
+              </button>
+              {!isAr && ` ${tr('mood.upgradeCtaSuffix')}`}
+            </>
           </p>
         )}
       </div>
@@ -626,24 +629,24 @@ export default function MoodInput({ userId = "", region = null, language = null,
   };
 
   const MoodCard = ({ mood, showValence = false }) => (
-    <div className="mood-result-card" style={{ "--accent": mood.color }} dir={isAr ? "rtl" : "ltr"}>
+    <div className="mood-result-card" style={{ "--accent": mood.color }} dir={isRtl ? "rtl" : "ltr"}>
       <div className="mood-emoji">{mood.emoji}</div>
       <h3 className="mood-label">{isAr ? mood.labelAr : mood.label}</h3>
       <div className="mood-tags">
-        {(isAr ? mood.tagsAr : mood.tags).map((t) => (
-          <span key={t} className="mood-tag">{t}</span>
+        {(isAr ? mood.tagsAr : mood.tags).map((tag) => (
+          <span key={tag} className="mood-tag">{tag}</span>
         ))}
       </div>
       {mood.reasoning && <p className="mood-reasoning">💭 {mood.reasoning}</p>}
       {showValence && mood.valence !== undefined && (
         <div className="mood-meters">
           <div className="meter-row">
-            <span className="meter-lbl">{isAr ? "إيجابية" : "Valence"}</span>
+            <span className="meter-lbl">{tr('mood.valence')}</span>
             <div className="meter-bar"><div className="meter-fill" style={{ width: `${mood.valence * 100}%`, background: mood.color }} /></div>
             <span className="meter-val">{Math.round(mood.valence * 100)}%</span>
           </div>
           <div className="meter-row">
-            <span className="meter-lbl">{isAr ? "طاقة" : "Energy"}</span>
+            <span className="meter-lbl">{tr('mood.energy')}</span>
             <div className="meter-bar"><div className="meter-fill" style={{ width: `${(mood.energy || 0) * 100}%`, background: mood.color }} /></div>
             <span className="meter-val">{Math.round((mood.energy || 0) * 100)}%</span>
           </div>
@@ -653,19 +656,12 @@ export default function MoodInput({ userId = "", region = null, language = null,
   );
 
   const voiceLabel = () => {
-    if (isAr) {
-      if (recording)                   return "بيسمعك… اضغط لما تخلص";
-      if (voiceStatus === "analysing") return "بيحلل صوتك…";
-      if (voiceStatus === "done")      return "اضغط تاني للتسجيل";
-      if (voiceStatus === "error")     return "مش قادر يسمع — حاول تاني";
-      return "اضغط وقول مزاجك بأي لغة";
-    }
-    if (recording)                   return "Listening… tap when you're done";
-    if (voiceStatus === "analysing") return "Analysing your voice…";
-    if (voiceStatus === "done")      return "Tap to speak again";
-    if (voiceStatus === "partial")   return isAr ? "تم — بعض الكلمات قد لا تكون دقيقة" : "Done — some words may need a retry";
-    if (voiceStatus === "error")     return "Could not detect — try again";
-    return "Tap to speak — any language";
+    if (recording) return tr('mood.voiceRecording');
+    if (voiceStatus === "analysing") return tr('mood.voiceAnalysing');
+    if (voiceStatus === "done") return tr('mood.voiceDone');
+    if (voiceStatus === "partial") return tr('mood.voicePartial');
+    if (voiceStatus === "error") return tr('mood.voiceError');
+    return tr('mood.voiceTap');
   };
 
   return (
@@ -715,7 +711,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
             {detectedLang && (voiceStatus === "done" || voiceStatus === "partial") && (
               <p className="lang-badge">
                 {LANG_FLAGS[detectedLang] || "🌐"}{" "}
-                {LANG_NAMES[detectedLang] || detectedLang.toUpperCase()}
+                {langDisplay(detectedLang)}
               </p>
             )}
             {transcript && (voiceStatus === "done" || voiceStatus === "partial") && (
@@ -736,7 +732,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
               </div>
             )}
             {voiceStatus === "error" && (
-              <p className="voice-error">{isAr ? "⚠️ تأكد إن الميكروفون شغال" : "⚠️ Make sure your mic is allowed."}</p>
+              <p className="voice-error">{tr('mood.voiceMicError')}</p>
             )}
           </div>
           {!detectedMood && voiceStatus !== "analysing" && <QuickEmotionPicker />}
@@ -744,10 +740,10 @@ export default function MoodInput({ userId = "", region = null, language = null,
             <div className="result-area">
               <MoodCard mood={detectedMood} showValence />
               {detectedMood.confidence !== undefined && (
-                <p className="confidence-note">{isAr ? "الدقة" : "Confidence"}: {Math.round(detectedMood.confidence * 100)}%</p>
+                <p className="confidence-note">{tr('mood.confidence')}: {Math.round(detectedMood.confidence * 100)}%</p>
               )}
               <button className="continue-btn" onClick={() => handleContinue(detectedMood)}>
-                {isAr ? "← ابدأ الموسيقى" : "Create my music →"}
+                {tr('mood.createMusic')}
               </button>
             </div>
           )}
@@ -758,17 +754,17 @@ export default function MoodInput({ userId = "", region = null, language = null,
       {tab === "text" && (
         <div className="mi-panel">
           <div className="text-wrap">
-            <p className="text-prompt">{isAr ? "قول مزاجك بأي لغة…" : "How are you feeling? Write in any language."}</p>
+            <p className="text-prompt">{tr('mood.textPrompt')}</p>
             <textarea
               className="text-area"
               rows={4}
-              placeholder={isAr ? "أنا حاسس… / I feel… / Je me sens…" : "I feel… / أنا أشعر… / Je me sens…"}
+              placeholder={tr('mood.placeholder')}
               value={textInput}
               onChange={(e) => { setTextInput(e.target.value); setTextMood(null); }}
               dir="auto"
             />
             <button className="analyse-btn" onClick={analyzeText} disabled={!textInput.trim() || textAnalysing}>
-              {textAnalysing ? (isAr ? "بيحلل…" : "Analysing…") : (isAr ? "حلل مزاجي" : "Analyse my mood")}
+              {textAnalysing ? tr('mood.analyzing') : tr('mood.analyze')}
             </button>
           </div>
           {!textMood && !textAnalysing && <QuickEmotionPicker />}
@@ -776,10 +772,10 @@ export default function MoodInput({ userId = "", region = null, language = null,
             <div className="result-area">
               <MoodCard mood={textMood} showValence />
               {textMood.confidence !== undefined && (
-                <p className="confidence-note">{isAr ? "الدقة" : "Confidence"}: {Math.round(textMood.confidence * 100)}%</p>
+                <p className="confidence-note">{tr('mood.confidence')}: {Math.round(textMood.confidence * 100)}%</p>
               )}
               <button className="continue-btn" onClick={() => handleContinue(textMood)}>
-                {isAr ? "← ابدأ الموسيقى" : "Create my music →"}
+                {tr('mood.createMusic')}
               </button>
             </div>
           )}
@@ -823,7 +819,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
                   onClick={() => { if (quizStep > 0) setQuizStep(quizStep - 1); }}
                   disabled={quizStep === 0}
                 >
-                  {isAr ? "التالي →" : "← Prev"}
+                  {tr('mood.quizPrev')}
                 </button>
                 <p className="quiz-counter">{quizStep + 1} / {QUIZ_QUESTIONS.length}</p>
                 <button
@@ -831,16 +827,16 @@ export default function MoodInput({ userId = "", region = null, language = null,
                   onClick={() => { if (quizStep < quizAnswers.length) setQuizStep(quizStep + 1); }}
                   disabled={quizStep >= quizAnswers.length}
                 >
-                  {isAr ? "← السابق" : "Next →"}
+                  {tr('mood.quizNext')}
                 </button>
               </div>
             </div>
           ) : (
             <div className="result-area">
               <MoodCard mood={quizMood} showValence />
-              <button className="reset-btn" onClick={resetQuiz}>{isAr ? "حل الاختبار تاني" : "Retake quiz"}</button>
+              <button className="reset-btn" onClick={resetQuiz}>{tr('mood.retakeQuiz')}</button>
               <button className="continue-btn" onClick={() => handleContinue(quizMood)}>
-                {isAr ? "← ابدأ الموسيقى" : "Create my music →"}
+                {tr('mood.createMusic')}
               </button>
             </div>
           )}

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  PRE_QUESTIONS,
-  POST_QUESTIONS,
+  getPreQuestions,
+  getPostQuestions,
   EMPTY_SURVEY_FORM,
   validateSurveyForm,
   buildSurveyPayload,
 } from '../utils/surveyQuestions'
 import { fetchSurveyStatus, patchSurveyStatusCache } from '../utils/tagline'
+import { useI18n } from '../i18n/I18nContext.jsx'
 
 const API = import.meta.env.VITE_API_URL
 
@@ -53,7 +54,7 @@ function OptionGroup({ label, options, value, onChange }) {
   )
 }
 
-function MultiChipGroup({ label, options, value = [], onChange, min = 1 }) {
+function MultiChipGroup({ label, options, value = [], onChange, min = 1, genreHint }) {
   const toggle = (id) => {
     if (value.includes(id)) onChange(value.filter(v => v !== id))
     else onChange([...value, id])
@@ -74,14 +75,14 @@ function MultiChipGroup({ label, options, value = [], onChange, min = 1 }) {
           </button>
         ))}
       </div>
-      {value.length < min && (
-        <p className="ss-hint">Select at least {min} genre{min > 1 ? 's' : ''}</p>
+      {value.length < min && genreHint && (
+        <p className="ss-hint">{genreHint}</p>
       )}
     </div>
   )
 }
 
-function QuestionField({ q, form, setForm }) {
+function QuestionField({ q, form, setForm, genreHint }) {
   const setVal = (key, val) => setForm(f => ({ ...f, [key]: val }))
   if (q.type === 'scale' || q.type === 'likert') {
     return (
@@ -111,6 +112,7 @@ function QuestionField({ q, form, setForm }) {
         value={form[q.key]}
         onChange={v => setVal(q.key, v)}
         min={q.min}
+        genreHint={genreHint}
       />
     )
   }
@@ -138,9 +140,11 @@ export default function StudySurvey({
   initialPhase = null,
   lockPhase = false,
   initialStatus = null,
+  gateNotice = '',
   onComplete,
   onStatusChange,
 }) {
+  const { t, locale, isRtl } = useI18n()
   const [phase, setPhase]           = useState(initialPhase || 'pre')
   const [status, setStatus]         = useState(initialStatus || { pre_done: false, post_done: false })
   const [loading, setLoading]       = useState(!initialStatus)
@@ -187,10 +191,10 @@ export default function StudySurvey({
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!userId) {
-      setError('Sign in to submit the survey.')
+      setError(t('survey.signInRequired'))
       return
     }
-    const validationError = validateSurveyForm(form, phase)
+    const validationError = validateSurveyForm(form, phase, locale)
     if (validationError) {
       setError(validationError)
       return
@@ -217,27 +221,30 @@ export default function StudySurvey({
       onStatusChange?.(fresh)
       if (lockPhase) onComplete?.(phase)
     } catch (err) {
-      setError(err.message || 'Could not save survey.')
+      setError(err.message || t('survey.saveFailed'))
     } finally {
       setSubmitting(false)
     }
   }
 
+  const questions = isPre ? getPreQuestions(locale) : getPostQuestions(locale)
+  const multiHint = (minVal) => t(minVal > 1 ? 'survey.selectGenresMinPlural' : 'survey.selectGenresMin', { min: minVal })
+
   if (loading || (lockPhase && phaseDone)) {
     return (
-      <div className="ss-root">
-        <p className="ss-muted">{lockPhase && phaseDone ? 'Continuing…' : 'Loading survey…'}</p>
+      <div className="ss-root" dir={isRtl ? 'rtl' : 'ltr'}>
+        <p className="ss-muted">{lockPhase && phaseDone ? t('survey.continuing') : t('survey.loading')}</p>
       </div>
     )
   }
 
   if (phaseDone && !done) {
     return (
-      <div className="ss-root ss-root--done">
+      <div className="ss-root ss-root--done" dir={isRtl ? 'rtl' : 'ltr'}>
         <div className="ss-done-icon">✓</div>
-        <h2 className="ss-title">Already completed</h2>
+        <h2 className="ss-title">{t('survey.alreadyTitle')}</h2>
         <p className="ss-sub">
-          You finished the {isPre ? 'pre-study' : 'post-study'} survey. Thanks — we only need one response per account for each phase.
+          {isPre ? t('survey.alreadyPre') : t('survey.alreadyPost')}
         </p>
         {!lockPhase && (
           <div className="ss-phase-tabs">
@@ -246,20 +253,20 @@ export default function StudySurvey({
               className={`ss-phase-tab ${phase === 'pre' ? 'ss-phase-tab--active' : ''}`}
               onClick={() => setPhase('pre')}
             >
-              Pre-test {status.pre_done && '✓'}
+              {t('survey.tabPre')} {status.pre_done && '✓'}
             </button>
             <button
               type="button"
               className={`ss-phase-tab ${phase === 'post' ? 'ss-phase-tab--active' : ''}`}
               onClick={() => setPhase('post')}
             >
-              Post-test {status.post_done && '✓'}
+              {t('survey.tabPost')} {status.post_done && '✓'}
             </button>
           </div>
         )}
         {!lockPhase && (
           <button type="button" className="ss-btn" onClick={() => onComplete?.(phase)}>
-            Back to Ekko →
+            {t('survey.backEkko')}
           </button>
         )}
       </div>
@@ -268,33 +275,36 @@ export default function StudySurvey({
 
   if (done) {
     return (
-      <div className="ss-root ss-root--done">
+      <div className="ss-root ss-root--done" dir={isRtl ? 'rtl' : 'ltr'}>
         <div className="ss-done-icon">✓</div>
-        <h2 className="ss-title">Thank you!</h2>
+        <h2 className="ss-title">{t('survey.thankYou')}</h2>
         <p className="ss-sub">
-          Your {phase === 'pre' ? 'pre-study' : 'post-study'} responses were saved.
-          {phase === 'pre' && !status.post_done && !lockPhase && ' Come back after using Ekko to complete the post-test.'}
+          {phase === 'pre' ? t('survey.savedPre') : t('survey.savedPost')}
+          {phase === 'pre' && !status.post_done && !lockPhase && t('survey.savedPostHint')}
         </p>
         {(lockPhase || onComplete) && (
           <button type="button" className="ss-btn" onClick={() => onComplete?.(phase)}>
-            {phase === 'pre' ? 'Continue to Ekko →' : 'Done →'}
+            {phase === 'pre' ? t('survey.continueEkko') : t('survey.done')}
           </button>
         )}
       </div>
     )
   }
 
-  const questions = isPre ? PRE_QUESTIONS : POST_QUESTIONS
-
   return (
-    <div className="ss-root">
+    <div className="ss-root" dir={isRtl ? 'rtl' : 'ltr'}>
+      {gateNotice && lockPhase && (
+        <div className="ss-gate-banner" role="status">
+          <span aria-hidden="true">📋</span>
+          <p>{gateNotice}</p>
+        </div>
+      )}
+
       <div className="ss-header">
-        <p className="ss-eyebrow">{isPre ? 'Pre-study' : 'Post-study'} · UX research</p>
-        <h1 className="ss-title">{isPre ? 'Before you begin' : 'After your session'}</h1>
+        <p className="ss-eyebrow">{isPre ? t('survey.eyebrowPre') : t('survey.eyebrowPost')}</p>
+        <h1 className="ss-title">{isPre ? t('survey.titlePre') : t('survey.titlePost')}</h1>
         <p className="ss-sub">
-          {isPre
-            ? 'Pick answers that match each question — plus your favourite artists.'
-            : 'Choose the option that best describes your session. One optional text box at the end.'}
+          {isPre ? t('survey.subPre') : t('survey.subPost')}
         </p>
       </div>
 
@@ -305,34 +315,40 @@ export default function StudySurvey({
             className={`ss-phase-tab ${phase === 'pre' ? 'ss-phase-tab--active' : ''}`}
             onClick={() => setPhase('pre')}
           >
-            Pre-test {status.pre_done && '✓'}
+            {t('survey.tabPre')} {status.pre_done && '✓'}
           </button>
           <button
             type="button"
             className={`ss-phase-tab ${phase === 'post' ? 'ss-phase-tab--active' : ''}`}
             onClick={() => setPhase('post')}
           >
-            Post-test {status.post_done && '✓'}
+            {t('survey.tabPost')} {status.post_done && '✓'}
           </button>
         </div>
       )}
 
       <form className="ss-form" onSubmit={handleSubmit}>
         {questions.map(q => (
-          <QuestionField key={q.key} q={q} form={form} setForm={setForm} />
+          <QuestionField
+            key={q.key}
+            q={q}
+            form={form}
+            setForm={setForm}
+            genreHint={q.type === 'multi' ? multiHint(q.min || 1) : undefined}
+          />
         ))}
 
         <div className="ss-block ss-block--text">
           <label className="ss-field">
             <span className="ss-label">
-              Further improvements <span className="ss-optional">(optional)</span>
+              {t('survey.improvements')} <span className="ss-optional">{t('survey.optional')}</span>
             </span>
             <textarea
               className="ss-textarea"
               rows={3}
               value={form.improvements_needed}
               onChange={e => setForm(f => ({ ...f, improvements_needed: e.target.value }))}
-              placeholder="Anything else we should improve?"
+              placeholder={t('survey.improvementsPlaceholder')}
             />
           </label>
         </div>
@@ -340,7 +356,7 @@ export default function StudySurvey({
         {error && <p className="ss-error">{error}</p>}
 
         <button type="submit" className="ss-btn" disabled={submitting}>
-          {submitting ? 'Saving…' : `Submit ${isPre ? 'pre' : 'post'}-test`}
+          {submitting ? t('survey.saving') : (isPre ? t('survey.submitPre') : t('survey.submitPost'))}
         </button>
       </form>
 
@@ -358,6 +374,18 @@ export default function StudySurvey({
           color: #34d399; font-size: 28px; font-weight: 800;
           display: flex; align-items: center; justify-content: center;
           margin: 0 auto 16px;
+        }
+        .ss-gate-banner {
+          display: flex; align-items: flex-start; gap: 10px;
+          margin-bottom: 16px; padding: 12px 14px;
+          background: rgba(124, 92, 231, 0.12);
+          border: 1px solid rgba(168, 85, 247, 0.35);
+          border-radius: 12px;
+        }
+        .ss-gate-banner span { font-size: 18px; flex-shrink: 0; }
+        .ss-gate-banner p {
+          margin: 0; font-size: 13px; font-weight: 600;
+          color: #c4b5f0; line-height: 1.5;
         }
         .ss-header { text-align: center; margin-bottom: 20px; }
         .ss-eyebrow {

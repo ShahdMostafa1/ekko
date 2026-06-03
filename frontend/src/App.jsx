@@ -19,6 +19,7 @@ import { wasDailyChallengeDismissed, markDailyChallengeDismissed } from './utils
 import { computeBadgeStats, getNewlyEarnedBadges, markBadgeAnnounced } from './utils/badges'
 import { fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
 import { useI18n } from './i18n/I18nContext.jsx'
+import { ADMIN_EMAIL } from './utils/adminAuth'
 import './App.css'
 
 
@@ -54,8 +55,6 @@ const BACK_SCREEN_KEYS = {
   plans:      'back.back',
   survey:     'back.back',
 }
-
-const ADMIN_EMAIL = 'admin@ekko.app'
 
 async function awardXpIdempotent(userId, action, sessionKey) {
   if (!userId) return null
@@ -136,8 +135,10 @@ export default function App() {
   const [surveyPhase, setSurveyPhase]               = useState('pre')
   const [surveyLocked, setSurveyLocked]             = useState(false)
   const [surveyStatus, setSurveyStatus]             = useState(null)
+  const [surveyGateNotice, setSurveyGateNotice]     = useState('')
 
   const regionXpAwardedRef = useRef(false)
+  const surveyGateTimerRef = useRef(null)
   const moodSessionIdRef   = useRef(null)
   const songSessionIdRef   = useRef(null)
   const pendingGenRef      = useRef(null)
@@ -170,8 +171,19 @@ export default function App() {
     })
   }, [NO_STACK_SCREENS])
 
+  const promptSurveyRequired = useCallback(() => {
+    const msg = surveyPhase === 'post' ? t('survey.gatePost') : t('survey.gatePre')
+    setSurveyGateNotice(msg)
+    setSidebarOpen(false)
+    if (surveyGateTimerRef.current) clearTimeout(surveyGateTimerRef.current)
+    surveyGateTimerRef.current = setTimeout(() => setSurveyGateNotice(''), 6000)
+  }, [t, surveyPhase])
+
   const goBack = useCallback(() => {
-    if (surveyLocked) return
+    if (surveyLocked) {
+      promptSurveyRequired()
+      return
+    }
     if (screen === 'player') setMusicParams(null)
 
     const prev = navStackRef.current.pop()
@@ -192,7 +204,7 @@ export default function App() {
     }
     const dest = fallback[screen]
     if (dest) setScreen(dest)
-  }, [screen])
+  }, [screen, surveyLocked, promptSurveyRequired])
 
   const tryClaimDailyChallenge = useCallback(async (trigger) => {
     const currentUser = userRef.current
@@ -414,6 +426,7 @@ export default function App() {
       patchSurveyStatusCache(userId, fresh)
     }
     setSurveyLocked(false)
+    setSurveyGateNotice('')
     if (phase === 'pre') {
       const reg = homeRegionRef.current
       routeToAppHome(reg ? { region: reg } : null)
@@ -519,6 +532,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe()
       if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
+      if (surveyGateTimerRef.current) clearTimeout(surveyGateTimerRef.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -653,19 +667,28 @@ export default function App() {
         onNavigate={async (dest) => {
           const VALID = ['mood','history','rewards','plans','survey','language','cocreation','player']
           if (!VALID.includes(dest)) return
-          if (surveyLocked && dest !== 'survey') return
+          if (surveyLocked && dest !== 'survey') {
+            promptSurveyRequired()
+            return
+          }
           if (screen === 'player' && dest !== 'player') setMusicParams(null)
-          if (dest === 'survey' && userRef.current?.id) {
+          if (dest === 'survey' && userRef.current?.id && !surveyLocked) {
             const st = await fetchSurveyStatus(userRef.current.id, { force: true })
             setSurveyStatus(st)
             patchSurveyStatusCache(userRef.current.id, st)
             setSurveyPhase(st.pre_done && !st.post_done ? 'post' : 'pre')
-            setSurveyLocked(false)
           }
           navigateTo(dest)
           setSidebarOpen(false)
         }}
-        onBilling={() => { navigateTo('plans'); setSidebarOpen(false) }}
+        onBilling={() => {
+          if (surveyLocked) {
+            promptSurveyRequired()
+            return
+          }
+          navigateTo('plans')
+          setSidebarOpen(false)
+        }}
         onSignOut={handleSignOut}
         userName={userName}
         userEmail={user?.email || ''}
@@ -673,6 +696,8 @@ export default function App() {
         userPlan={userPlan}
         region={region}
         language={language}
+        surveyLocked={surveyLocked}
+        surveyPhase={surveyPhase}
       />
 
       {/* Header */}
@@ -691,7 +716,7 @@ export default function App() {
           className="ekko-logo"
           onClick={() => {
             if (surveyLocked) {
-              navigateTo('survey', { reset: true })
+              promptSurveyRequired()
               return
             }
             navigateTo('mood', { reset: true })
@@ -765,8 +790,8 @@ export default function App() {
         {screen === 'generating' && (
           <div className="generating-screen">
             <div className="gen-orb" />
-            <p className="gen-label">Composing your music…</p>
-            <p className="gen-sub">Translating emotion into sound</p>
+            <p className="gen-label">{t('generate.label')}</p>
+            <p className="gen-sub">{t('generate.sub')}</p>
           </div>
         )}
 
@@ -812,17 +837,25 @@ export default function App() {
             initialPhase={surveyPhase}
             lockPhase={surveyLocked}
             initialStatus={surveyStatus}
+            gateNotice={surveyGateNotice}
             onComplete={handleSurveyComplete}
             onStatusChange={handleSurveyStatusChange}
           />
         )}
       </main>
 
+      {surveyGateNotice && screen !== 'survey' && (
+        <div className="ekko-survey-gate" role="status" aria-live="polite">
+          <span className="ekko-survey-gate__icon" aria-hidden="true">📋</span>
+          <p className="ekko-survey-gate__text">{surveyGateNotice}</p>
+        </div>
+      )}
+
       {/* XP reward toast */}
       {reward && <RewardBadge label={reward.label} sub={reward.sub} />}
 
       {/* Daily Challenge CTA — once per day on login */}
-      {showDailyChallenge && !['auth', 'loading', 'admin', 'generating'].includes(screen) && (
+      {showDailyChallenge && !surveyLocked && !['auth', 'loading', 'admin', 'generating'].includes(screen) && (
         <DailyChallengeCTA
           userId={userRef.current?.id || user?.id}
           onAccept={() => {

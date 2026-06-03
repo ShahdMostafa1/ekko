@@ -1,5 +1,26 @@
 /** Pre/post study survey — scales match each question (stored as 1–5 for analysis). */
 
+import {
+  PRE_QUESTIONS_AR,
+  POST_QUESTIONS_AR,
+  SCALE_BY_FIELD_AR,
+  AGE_GROUPS_AR,
+  MOOD_APP_USE_AR,
+  PRIMARY_GOALS_AR,
+  GENRES_AR,
+  EXPECTATIONS_MET_AR,
+  ASPECTS_AR,
+  WEAKNESS_OPTIONS_AR,
+} from './surveyQuestionsAr.js'
+
+export function getPreQuestions(locale) {
+  return locale === 'ar' ? PRE_QUESTIONS_AR : PRE_QUESTIONS
+}
+
+export function getPostQuestions(locale) {
+  return locale === 'ar' ? POST_QUESTIONS_AR : POST_QUESTIONS
+}
+
 export const FREQUENCY_5 = [
   { value: 1, label: 'Rarely' },
   { value: 2, label: 'A few times a month' },
@@ -237,15 +258,16 @@ export const EMPTY_SURVEY_FORM = {
   improvements_needed: '',
 }
 
-export function validateSurveyForm(form, phase) {
-  const questions = phase === 'pre' ? PRE_QUESTIONS : POST_QUESTIONS
+export function validateSurveyForm(form, phase, locale = 'en') {
+  const questions = phase === 'pre' ? getPreQuestions(locale) : getPostQuestions(locale)
+  const suffix = locale === 'ar' ? 'مطلوب.' : 'is required.'
   for (const q of questions) {
     if (!q.required) continue
     const val = form[q.key]
-    if ((q.type === 'scale' || q.type === 'likert') && (!val || val < 1)) return `${q.label} is required.`
-    if (q.type === 'choice' && !val) return `${q.label} is required.`
-    if (q.type === 'multi' && (!val?.length || val.length < (q.min || 1))) return `${q.label} is required.`
-    if (q.type === 'text' && q.required && !String(val || '').trim()) return `${q.label} is required.`
+    if ((q.type === 'scale' || q.type === 'likert') && (!val || val < 1)) return `${q.label} ${suffix}`
+    if (q.type === 'choice' && !val) return `${q.label} ${suffix}`
+    if (q.type === 'multi' && (!val?.length || val.length < (q.min || 1))) return `${q.label} ${suffix}`
+    if (q.type === 'text' && q.required && !String(val || '').trim()) return `${q.label} ${suffix}`
   }
   return null
 }
@@ -291,14 +313,14 @@ export function buildSurveyPayload(form, userId, phase) {
 }
 
 /** Label lookup for admin / export */
-export function labelFor(field, value) {
+export function labelFor(field, value, locale = 'en') {
   if (value == null || value === '') return '—'
-  const scale = SCALE_BY_FIELD[field]
+  const scale = locale === 'ar' ? (SCALE_BY_FIELD_AR[field] || SCALE_BY_FIELD[field]) : SCALE_BY_FIELD[field]
   if (scale) {
     const n = Number(value)
     return scale.find(s => s.value === n)?.label || String(value)
   }
-  const maps = {
+  const mapsEn = {
     age_group: AGE_GROUPS,
     used_mood_apps: MOOD_APP_USE,
     primary_goal: PRIMARY_GOALS,
@@ -306,12 +328,21 @@ export function labelFor(field, value) {
     strongest_aspect: ASPECTS,
     weakest_aspect: WEAKNESS_OPTIONS,
   }
-  const list = maps[field]
+  const mapsAr = {
+    age_group: AGE_GROUPS_AR,
+    used_mood_apps: MOOD_APP_USE_AR,
+    primary_goal: PRIMARY_GOALS_AR,
+    expectations_met: EXPECTATIONS_MET_AR,
+    strongest_aspect: ASPECTS_AR,
+    weakest_aspect: WEAKNESS_OPTIONS_AR,
+  }
+  const list = (locale === 'ar' ? mapsAr : mapsEn)[field]
   if (list) return list.find(o => o.id === value)?.label || value
   if (field === 'genre_preferences') {
     try {
       const ids = typeof value === 'string' ? JSON.parse(value) : value
-      return ids.map(id => GENRES.find(g => g.id === id)?.label || id).join(', ')
+      const genres = locale === 'ar' ? GENRES_AR : GENRES
+      return ids.map(id => genres.find(g => g.id === id)?.label || id).join(', ')
     } catch { return value }
   }
   return String(value)

@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { id: 'billing', icon: '💳', labelKey: 'nav.billing'  },
 ]
 
-export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, onSignOut, userName, userEmail, xp, userPlan }) {
+export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, onSignOut, userName, userEmail, xp, userPlan, surveyLocked = false, surveyPhase = 'pre' }) {
   const { t, locale, setLocale, isRtl } = useI18n()
   // Close on Escape key
   useEffect(() => {
@@ -165,10 +165,12 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
 
           {NAV_ITEMS.map(item => {
             const isActive = screen === item.id
+            const navBlocked = surveyLocked && item.id !== 'survey'
             return (
               <button
                 key={item.id}
                 onClick={(e) => { e.stopPropagation(); handleNav(item.id) }}
+                title={navBlocked ? (surveyPhase === 'post' ? t('survey.gatePost') : t('survey.gatePre')) : undefined}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '11px 13px', marginBottom: 3,
@@ -181,6 +183,8 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
                   borderRadius: 12, cursor: 'pointer',
                   transition: 'all .18s', textAlign: isRtl ? 'right' : 'left',
                   fontFamily: "'DM Sans', sans-serif",
+                  opacity: navBlocked ? 0.55 : 1,
+                  cursor: navBlocked ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={e => {
                   if (!isActive) {

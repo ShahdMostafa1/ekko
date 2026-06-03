@@ -55,9 +55,9 @@ Plan limits are enforced on **both** frontend (UI locks) and backend (generate/s
 | **Post-test** | After first song (via **Done** on player) | Experience, mood accuracy, music quality, cultural fit, lyrics, co-creation, NPS-style recommend, best/worst aspects |
 | **Optional text** | Both phases | Further improvements only |
 
-**View results:** Sign in as `admin@ekko.app` → Admin dashboard → **Surveys** tab → filter Pre/Post → **Export CSV**.
+**View results:** Sign in as `admin@ekko.app` (password set in **Supabase Auth only**, not in source code) → Admin dashboard → **Surveys** tab → filter Pre/Post → **Export CSV**.
 
-**API:** `GET /survey/status/{user_id}` · `POST /survey/submit` · `GET /admin/surveys` (header `X-Admin-Secret`)
+**API:** `GET /survey/status/{user_id}` · `POST /survey/submit` · `GET /admin/surveys` (header `Authorization: Bearer <Supabase access token>` after admin sign-in)
 
 **Study surveys table (required for admin Surveys tab):** In Supabase → SQL Editor, run the full script once: `backend/migrations/create_study_surveys_full.sql`. (Older split files `add_study_surveys.sql` + `extend_study_surveys.sql` are optional if you already ran them.)
 
@@ -287,8 +287,16 @@ RESEND_FROM_EMAIL=Ekko <receipts@yourdomain.com>
 
 FRONTEND_URL=https://ekko-silk.vercel.app
 RENDER_EXTERNAL_URL=https://ekko-s8pl.onrender.com
-ADMIN_SECRET=EkkoAdmin2026!   # admin delete-user + survey export (match dashboard login)
+ADMIN_EMAIL=admin@ekko.app
+ADMIN_SECRET=your-long-random-secret   # optional server-only fallback for curl/scripts — never put in frontend
 ```
+
+### Admin login (security)
+
+- Create the admin user in **Supabase → Authentication → Users** with email `admin@ekko.app` and a **strong password** (not stored in this repo).
+- The admin dashboard signs in through **Supabase Auth**; protected API routes accept the session **Bearer token**.
+- **Do not** hardcode passwords in `frontend/` — they are bundled into public JS. If a password was ever committed or deployed, **rotate it in Supabase immediately**.
+- Optional `ADMIN_SECRET` on Render is only for manual API calls from the server side, not for the web app.
 
 ### Frontend (`frontend/.env`)
 
