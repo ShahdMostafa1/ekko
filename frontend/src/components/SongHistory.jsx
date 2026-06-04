@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
 import { applyHistoryLimit, canDownload } from '../utils/planUtils'
 import { openAudioUrl } from '../utils/audioProxy'
-import { getHistoryAudio } from '../utils/historyAudio'
+import { getHistoryAudio, pauseOtherPageAudio } from '../utils/historyAudio'
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
@@ -26,6 +26,186 @@ const EMOTION_EMOJI = {
   fear: '🌀', surprise: '⚡', disgust: '🌫️', neutral: '🌿',
 }
 
+const SongCard = memo(function SongCard({
+  song,
+  isOpen,
+  isActive,
+  isPlaying,
+  isBusy,
+  editingId,
+  editTitle,
+  userPlan,
+  onToggleExpand,
+  onEditTitleChange,
+  onSaveTitle,
+  onCancelEdit,
+  onStartEdit,
+  onToggleFavorite,
+  onTogglePlay,
+  onDelete,
+  onUpgrade,
+  onProgressFillRef,
+}) {
+  const meta = REGION_META[song.region] || REGION_META.global
+  const isPlay = isActive && isPlaying
+  const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+  const displayName = song.title || song.mood_label || song.emotion
+
+  return (
+    <div className={`sh-card ${song.is_favorite ? 'fav' : ''}`} style={{ '--rc': meta.color }}>
+      <div className="sh-card-top" onClick={onToggleExpand}>
+        <div className="sh-left">
+          <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
+          <div className="sh-info">
+            {editingId === song.id ? (
+              <div className="sh-edit-row" onClick={e => e.stopPropagation()}>
+                <input
+                  className="sh-edit-input"
+                  value={editTitle}
+                  onChange={e => onEditTitleChange(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') onSaveTitle(song.id); if (e.key === 'Escape') onCancelEdit() }}
+                  autoFocus
+                />
+                <button className="sh-action-btn save" onClick={() => onSaveTitle(song.id)}>✓</button>
+                <button className="sh-action-btn" onClick={onCancelEdit}>✕</button>
+              </div>
+            ) : (
+              <p className="sh-mood">{displayName}</p>
+            )}
+            <p className="sh-meta">
+              <span className="sh-region">{meta.emoji} {meta.label}</span>
+              <span className="sh-dot">·</span>
+              <span className="sh-date">{dateStr}</span>
+              {song.language && song.language !== 'English' && (
+                <><span className="sh-dot">·</span><span className="sh-lang">{song.language}</span></>
+              )}
+              {song.title && song.mood_label && (
+                <><span className="sh-dot">·</span><span className="sh-mood-sub">{song.mood_label}</span></>
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="sh-right">
+          <button
+            className={`sh-action-btn sh-fav-btn ${song.is_favorite ? 'on' : ''}`}
+            onClick={e => onToggleFavorite(song, e)}
+            disabled={isBusy}
+            title={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
+            aria-label={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
+            aria-pressed={song.is_favorite}
+          >
+            {song.is_favorite ? '❤️' : '🤍'}
+          </button>
+          {song.audio_url && (
+            <>
+              {canDownload(userPlan) ? (
+                <a
+                  className="sh-action-btn sh-dl-btn"
+                  href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
+                  download
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title="Download"
+                  aria-label="Download song"
+                >
+                  ⬇
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="sh-action-btn sh-dl-btn locked"
+                  onClick={e => { e.stopPropagation(); onUpgrade?.() }}
+                  title="Download — Groove or Studio"
+                  aria-label="Download locked — upgrade to unlock"
+                >
+                  🔒
+                </button>
+              )}
+              <button
+                type="button"
+                className={`sh-play ${isPlay ? 'playing' : ''}`}
+                onClick={e => onTogglePlay(song, e)}
+                aria-label={isPlay ? 'Pause' : 'Play'}
+              >
+                {isPlay ? '⏸' : '▶'}
+              </button>
+            </>
+          )}
+          <button className="sh-action-btn" onClick={e => onStartEdit(song, e)} title="Rename">✎</button>
+          <button className="sh-action-btn danger" onClick={e => onDelete(song, e)} disabled={isBusy} title="Delete">🗑</button>
+          <span className="sh-chevron">{isOpen ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      {isActive && (
+        <div className="sh-play-progress-wrap">
+          <div
+            ref={onProgressFillRef}
+            className="sh-play-progress-fill"
+            style={{ width: '0%', background: meta.color }}
+          />
+        </div>
+      )}
+
+      {isOpen && (
+        <div className="sh-expanded">
+          {song.lyrics && (
+            <div className="sh-lyrics-wrap">
+              <p className="sh-section-label">Lyrics</p>
+              <pre className="sh-lyrics">{song.lyrics}</pre>
+            </div>
+          )}
+
+          <div className="sh-bars">
+            {[
+              { label: 'Valence', val: song.valence ?? 0.5 },
+              { label: 'Energy',  val: song.energy  ?? 0.5 },
+            ].map(({ label, val }) => (
+              <div key={label} className="sh-bar-row">
+                <span className="sh-bar-label">{label}</span>
+                <div className="sh-bar-bg">
+                  <div className="sh-bar-fill" style={{ width: `${val * 100}%`, background: meta.color }} />
+                </div>
+                <span className="sh-bar-val">{Math.round(val * 100)}%</span>
+              </div>
+            ))}
+          </div>
+
+          {song.reasoning  && <p className="sh-reasoning">💭 {song.reasoning}</p>}
+          {song.artist_label && <p className="sh-artist">🎤 {song.artist_label} style</p>}
+          {song.audio_url && (
+            <div className="sh-dl-row">
+              {canDownload(userPlan) ? (
+                <a
+                  className="sh-dl-link"
+                  href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
+                  download
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                >
+                  ⬇ Download track
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="sh-dl-link locked"
+                  onClick={e => { e.stopPropagation(); onUpgrade?.() }}
+                >
+                  🔒 Download — upgrade to Groove or Studio
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
 export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade }) {
   const [songs, setSongs]       = useState([])
   const [byRegion, setByRegion] = useState({})
@@ -36,15 +216,18 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   const [expanded, setExpanded] = useState(null)
   const [activeSongId, setActiveSongId] = useState(null)
   const [isPlaying, setIsPlaying]       = useState(false)
-  const [playProgress, setPlayProgress] = useState({})
   const [editingId, setEditingId]     = useState(null)
   const [editTitle, setEditTitle]     = useState('')
   const [actionLoading, setActionLoading] = useState(null)
   const [actionError, setActionError]     = useState('')
   const audioRef                = useRef(null)
   const activeSongRef           = useRef(null)
+  const activeSongIdRef         = useRef(null)
+  const isPlayingRef            = useRef(false)
+  const progressFillRefs        = useRef({})
   const rafRef                  = useRef(null)
   const playGenRef              = useRef(0)
+  const playPendingRef          = useRef(false)
   const activeSourceRef         = useRef(null)
 
   const API = import.meta.env.VITE_API_URL
@@ -75,10 +258,12 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     if (!el) return undefined
 
     const onPlay = () => {
+      isPlayingRef.current = true
       setIsPlaying(true)
       if (activeSongRef.current) trackProgress(activeSongRef.current)
     }
     const onPause = () => {
+      isPlayingRef.current = false
       stopProgress()
       setIsPlaying(false)
     }
@@ -118,6 +303,11 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
   const bumpPlayGen = () => { playGenRef.current += 1 }
 
+  const setProgressWidth = (songId, pct) => {
+    const fill = progressFillRefs.current[String(songId)]
+    if (fill) fill.style.width = `${pct * 100}%`
+  }
+
   const clearActivePlayback = (songId) => {
     bumpPlayGen()
     stopProgress()
@@ -128,12 +318,15 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       el.load()
     }
     activeSongRef.current = null
+    activeSongIdRef.current = null
     revokeBlobAudioUrl()
     activeSourceRef.current = null
+    playPendingRef.current = false
+    isPlayingRef.current = false
     setActiveSongId(null)
     setIsPlaying(false)
     if (songId != null) {
-      setPlayProgress(prev => ({ ...prev, [String(songId)]: 0 }))
+      setProgressWidth(songId, 0)
     }
   }
 
@@ -143,10 +336,22 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       const el = audioRef.current
       if (!el || el.paused) return
       const p = el.duration ? el.currentTime / el.duration : 0
-      setPlayProgress(prev => ({ ...prev, [id]: p }))
+      setProgressWidth(id, p)
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
+  }
+
+  const pauseActiveSong = (el) => {
+    bumpPlayGen()
+    playPendingRef.current = false
+    isPlayingRef.current = false
+    stopProgress()
+    setIsPlaying(false)
+    pauseOtherPageAudio(null)
+    if (el) {
+      try { el.pause() } catch { /* ignore */ }
+    }
   }
 
   const togglePlay = async (song, e) => {
@@ -164,11 +369,11 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       return
     }
 
-    const isActive = String(activeSongId) === songId
+    const isActive =
+      String(activeSongIdRef.current) === songId || String(activeSongId) === songId
 
-    if (isActive && !el.paused) {
-      bumpPlayGen()
-      try { el.pause() } catch { /* ignore */ }
+    if (isActive && (isPlayingRef.current || playPendingRef.current || !el.paused)) {
+      pauseActiveSong(el)
       return
     }
 
@@ -190,9 +395,12 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     }
 
     setActionError('')
+    pauseOtherPageAudio(el)
     activeSongRef.current = songId
+    activeSongIdRef.current = songId
     setActiveSongId(songId)
-    setPlayProgress(prev => ({ ...prev, [songId]: 0 }))
+    setProgressWidth(songId, 0)
+    playPendingRef.current = true
 
     const startPlayback = async (url) => {
       if (playGenRef.current !== gen) return false
@@ -210,12 +418,18 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
     try {
       for (const url of sources) {
-        if (await startPlayback(url)) return
+        if (await startPlayback(url)) {
+          playPendingRef.current = false
+          return
+        }
       }
       const blobTarget = sources.find((u) => u.includes('/music/stream')) || sources[0]
       const blobUrl = await fetchBlobAudioUrl(blobTarget)
       if (playGenRef.current !== gen) return
-      if (blobUrl && (await startPlayback(blobUrl))) return
+      if (blobUrl && (await startPlayback(blobUrl))) {
+        playPendingRef.current = false
+        return
+      }
       if (playGenRef.current !== gen) return
       clearActivePlayback(songId)
       setActionError('Could not play this song. Use the link below to open it in a new tab.')
@@ -223,6 +437,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       if (playGenRef.current === gen) {
         setActionError('Could not play this song. Use the link below to open it in a new tab.')
       }
+    } finally {
+      if (playGenRef.current === gen) playPendingRef.current = false
     }
   }
 
@@ -349,168 +565,10 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
 
   const regions = Object.keys(byRegion)
 
-  const SongCard = ({ song }) => {
-    const meta    = REGION_META[song.region] || REGION_META.global
-    const isOpen  = expanded === song.id
-    const isActive = String(activeSongId) === String(song.id)
-    const isPlay   = isActive && isPlaying
-    const isBusy   = actionLoading === song.id
-    const prog     = playProgress[String(song.id)] || 0
-    const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
-      month: 'short', day: 'numeric', year: 'numeric',
-    })
-    const displayName = song.title || song.mood_label || song.emotion
-
-    return (
-      <div className={`sh-card ${song.is_favorite ? 'fav' : ''}`} style={{ '--rc': meta.color }}>
-        <div className="sh-card-top" onClick={() => setExpanded(isOpen ? null : song.id)}>
-          <div className="sh-left">
-            <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
-            <div className="sh-info">
-              {editingId === song.id ? (
-                <div className="sh-edit-row" onClick={e => e.stopPropagation()}>
-                  <input
-                    className="sh-edit-input"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') saveTitle(song.id); if (e.key === 'Escape') setEditingId(null) }}
-                    autoFocus
-                  />
-                  <button className="sh-action-btn save" onClick={() => saveTitle(song.id)}>✓</button>
-                  <button className="sh-action-btn" onClick={() => setEditingId(null)}>✕</button>
-                </div>
-              ) : (
-                <p className="sh-mood">{displayName}</p>
-              )}
-              <p className="sh-meta">
-                <span className="sh-region">{meta.emoji} {meta.label}</span>
-                <span className="sh-dot">·</span>
-                <span className="sh-date">{dateStr}</span>
-                {song.language && song.language !== 'English' && (
-                  <><span className="sh-dot">·</span><span className="sh-lang">{song.language}</span></>
-                )}
-                {song.title && song.mood_label && (
-                  <><span className="sh-dot">·</span><span className="sh-mood-sub">{song.mood_label}</span></>
-                )}
-              </p>
-            </div>
-          </div>
-          <div className="sh-right">
-            <button
-              className={`sh-action-btn sh-fav-btn ${song.is_favorite ? 'on' : ''}`}
-              onClick={e => toggleFavorite(song, e)}
-              disabled={isBusy}
-              title={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
-              aria-label={song.is_favorite ? 'Remove from favourites' : 'Add to favourites'}
-              aria-pressed={song.is_favorite}
-            >
-              {song.is_favorite ? '❤️' : '🤍'}
-            </button>
-            {song.audio_url && (
-              <>
-                {canDownload(userPlan) ? (
-                  <a
-                    className="sh-action-btn sh-dl-btn"
-                    href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={e => e.stopPropagation()}
-                    title="Download"
-                    aria-label="Download song"
-                  >
-                    ⬇
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    className="sh-action-btn sh-dl-btn locked"
-                    onClick={e => { e.stopPropagation(); onUpgrade?.() }}
-                    title="Download — Groove or Studio"
-                    aria-label="Download locked — upgrade to unlock"
-                  >
-                    🔒
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className={`sh-play ${isPlay ? 'playing' : ''}`}
-                  onClick={e => togglePlay(song, e)}
-                  aria-label={isPlay ? 'Pause' : 'Play'}
-                >
-                  {isPlay ? '⏸' : '▶'}
-                </button>
-              </>
-            )}
-            <button className="sh-action-btn" onClick={e => startEditTitle(song, e)} title="Rename">✎</button>
-            <button className="sh-action-btn danger" onClick={e => deleteSong(song, e)} disabled={isBusy} title="Delete">🗑</button>
-            <span className="sh-chevron">{isOpen ? '▲' : '▼'}</span>
-          </div>
-        </div>
-
-        {/* ── Progress bar shown when playing ── */}
-        {isActive && (
-          <div className="sh-play-progress-wrap">
-            <div className="sh-play-progress-fill" style={{ width: `${prog * 100}%`, background: meta.color }} />
-          </div>
-        )}
-
-        {isOpen && (
-          <div className="sh-expanded">
-            {song.lyrics && (
-              <div className="sh-lyrics-wrap">
-                <p className="sh-section-label">Lyrics</p>
-                {/* ── TALLER lyrics scroll area ── */}
-                <pre className="sh-lyrics">{song.lyrics}</pre>
-              </div>
-            )}
-
-            {/* Valence + Energy bars */}
-            <div className="sh-bars">
-              {[
-                { label: 'Valence', val: song.valence ?? 0.5 },
-                { label: 'Energy',  val: song.energy  ?? 0.5 },
-              ].map(({ label, val }) => (
-                <div key={label} className="sh-bar-row">
-                  <span className="sh-bar-label">{label}</span>
-                  <div className="sh-bar-bg">
-                    <div className="sh-bar-fill" style={{ width: `${val * 100}%`, background: meta.color }} />
-                  </div>
-                  <span className="sh-bar-val">{Math.round(val * 100)}%</span>
-                </div>
-              ))}
-            </div>
-
-            {song.reasoning  && <p className="sh-reasoning">💭 {song.reasoning}</p>}
-            {song.artist_label && <p className="sh-artist">🎤 {song.artist_label} style</p>}
-            {song.audio_url && (
-              <div className="sh-dl-row">
-                {canDownload(userPlan) ? (
-                  <a
-                    className="sh-dl-link"
-                    href={openAudioUrl(song.audio_url, song.task_id) || song.audio_url}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={e => e.stopPropagation()}
-                  >
-                    ⬇ Download track
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    className="sh-dl-link locked"
-                    onClick={e => { e.stopPropagation(); onUpgrade?.() }}
-                  >
-                    🔒 Download — upgrade to Groove or Studio
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    )
+  const bindProgressFill = (songId) => (el) => {
+    const key = String(songId)
+    if (el) progressFillRefs.current[key] = el
+    else delete progressFillRefs.current[key]
   }
 
   return (
@@ -609,7 +667,29 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         </div>
       ) : (
         <div className="sh-list">
-          {filteredSongs.map(song => <SongCard key={song.id} song={song} />)}
+          {filteredSongs.map(song => (
+            <SongCard
+              key={song.id}
+              song={song}
+              isOpen={expanded === song.id}
+              isActive={String(activeSongId) === String(song.id)}
+              isPlaying={isPlaying}
+              isBusy={actionLoading === song.id}
+              editingId={editingId}
+              editTitle={editTitle}
+              userPlan={userPlan}
+              onToggleExpand={() => setExpanded(expanded === song.id ? null : song.id)}
+              onEditTitleChange={setEditTitle}
+              onSaveTitle={saveTitle}
+              onCancelEdit={() => setEditingId(null)}
+              onStartEdit={startEditTitle}
+              onToggleFavorite={toggleFavorite}
+              onTogglePlay={togglePlay}
+              onDelete={deleteSong}
+              onUpgrade={onUpgrade}
+              onProgressFillRef={bindProgressFill(song.id)}
+            />
+          ))}
         </div>
       )}
 

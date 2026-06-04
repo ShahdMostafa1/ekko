@@ -66,7 +66,13 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const [sourceIndex, setSourceIndex] = useState(0);
   const effectiveSrc = srcOverride || sourceChain[sourceIndex] || null;
 
-  useEffect(() => () => revokeBlobAudioUrl(), []);
+  useEffect(() => () => {
+    const el = audioRef.current
+    if (el) {
+      try { el.pause() } catch { /* ignore */ }
+    }
+    revokeBlobAudioUrl()
+  }, []);
 
   useEffect(() => {
     setSrcOverride(null);
