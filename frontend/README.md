@@ -34,6 +34,8 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 
 Navigation and plan state live in `App.jsx`. Plan rules live in `src/utils/planUtils.js` — keep aligned with the backend.
 
+**Artist unlock (Free):** positions 1–2 free per region list; positions 3–7 cost 2,500 XP; position 8+ needs Groove. See root README → *Artist unlock*.
+
 ## Build
 
 ```bash

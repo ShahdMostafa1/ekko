@@ -184,4 +184,37 @@ export default {
     pollFailed: 'Generation failed: {error}',
     priorityQueue: 'Priority queue — writing lyrics…',
   },
+
+  cocreate: {
+    artistUnlockNote: '2 free per region · next {count} in the list: {cost} XP each · others need Groove.',
+    artistXpBadge: '{cost} XP',
+    unlockTitle: 'Unlock {name}?',
+    unlockBody: 'Spend {cost} XP to use this artist style forever. You have {xp} XP.',
+    unlockConfirm: 'Unlock for {cost} XP',
+    unlockCancel: 'Not now',
+    unlockSuccess: '{name} unlocked!',
+    earnXpTitle: 'Need more XP',
+    earnXpBody: 'You need {cost} XP to unlock this artist. Create and save songs (+20 XP each), check in daily, and complete challenges.',
+    earnXpCta: 'Got it',
+    planOnlyTitle: 'Groove or Studio',
+    planOnlyBody: 'Only the first {count} artists after the free pair can be unlocked with XP. This one needs a paid plan.',
+    planOnlyCta: 'See plans',
+    unlocking: 'Unlocking…',
+  },
+
+  upgradeCta: {
+    badge: '✦ UNLOCK MORE',
+    title: 'Go beyond Free',
+    subtitle: 'Upgrade to Groove and make music without limits.',
+    perks: {
+      regions: 'All 7 world regions — Arabic, Latin, India & more',
+      moods: 'Every mood & artist style unlocked',
+      download: 'Download your tracks',
+      history: 'Full song history — never lose a track',
+    },
+    price: '$9',
+    pricePeriod: '/ month · cancel anytime',
+    cta: 'See plans',
+    dismiss: 'Maybe later',
+  },
 }

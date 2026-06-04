@@ -184,4 +184,37 @@ export default {
     pollFailed: 'فشل التوليد: {error}',
     priorityQueue: 'أولوية — كتابة الكلمات…',
   },
+
+  cocreate: {
+    artistUnlockNote: '٢ مجاني لكل منطقة · التالي {count} في القائمة: {cost} نقطة · الباقي يحتاج Groove.',
+    artistXpBadge: '{cost} نقطة',
+    unlockTitle: 'فتح {name}؟',
+    unlockBody: 'استخدم {cost} نقطة لفتح أسلوب هذا الفنان للأبد. لديك {xp} نقطة.',
+    unlockConfirm: 'فتح مقابل {cost} نقطة',
+    unlockCancel: 'ليس الآن',
+    unlockSuccess: 'تم فتح {name}!',
+    earnXpTitle: 'تحتاج المزيد من النقاط',
+    earnXpBody: 'تحتاج {cost} نقطة لفتح هذا الفنان. أنشئ واحفظ أغانٍ (+20 لكل أغنية)، سجّل حضورك يومياً، وأكمل التحديات.',
+    earnXpCta: 'حسناً',
+    planOnlyTitle: 'Groove أو Studio',
+    planOnlyBody: 'فقط أول {count} فنانين بعد المجانيين يُفتحون بالنقاط. هذا الفنان يحتاج باقة مدفوعة.',
+    planOnlyCta: 'عرض الباقات',
+    unlocking: 'جاري الفتح…',
+  },
+
+  upgradeCta: {
+    badge: '✦ افتح المزيد',
+    title: 'تجاوز المجاني',
+    subtitle: 'رقِّ إلى Groove واصنع موسيقى بلا حدود.',
+    perks: {
+      regions: 'كل المناطق السبع — عربي، لاتيني، الهند والمزيد',
+      moods: 'كل المزاجات وأنماط الفنانين',
+      download: 'حمّل مقاطعك',
+      history: 'سجل كامل — لا تفقد أي أغنية',
+    },
+    price: '$9',
+    pricePeriod: '/ شهر · إلغاء في أي وقت',
+    cta: 'عرض الباقات',
+    dismiss: 'لاحقاً',
+  },
 }

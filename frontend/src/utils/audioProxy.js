@@ -12,12 +12,14 @@ export function directSonautoUrl(audioUrl) {
 
 export function proxiedAudioUrl(audioUrl, taskId) {
   const api = import.meta.env.VITE_API_URL
-  if (!api) return audioUrl || null
+  if (!api) return directSonautoUrl(audioUrl) || null
+  // Prefer CDN URL once we have it — avoids /stream/{task} while Sonauto is still GENERATING (409).
+  const direct = directSonautoUrl(audioUrl)
+  if (direct) {
+    return `${api}/music/stream?url=${encodeURIComponent(direct)}`
+  }
   if (taskId) {
     return `${api}/music/stream/${encodeURIComponent(taskId)}`
-  }
-  if (audioUrl) {
-    return `${api}/music/stream?url=${encodeURIComponent(audioUrl)}`
   }
   return null
 }
@@ -25,14 +27,12 @@ export function proxiedAudioUrl(audioUrl, taskId) {
 /** URL for "open in new tab" — redirects to Sonauto CDN (works on iPhone Safari). */
 export function openAudioUrl(audioUrl, taskId) {
   const api = import.meta.env.VITE_API_URL
+  const direct = directSonautoUrl(audioUrl)
+  if (direct && api) {
+    return `${api}/music/open?url=${encodeURIComponent(direct)}`
+  }
   if (taskId && api) {
     return `${api}/music/open/${encodeURIComponent(taskId)}`
   }
-  if (audioUrl && /^https?:\/\//i.test(audioUrl)) {
-    if (api && !audioUrl.includes('/music/stream')) {
-      return `${api}/music/open?url=${encodeURIComponent(audioUrl)}`
-    }
-    return audioUrl
-  }
-  return proxiedAudioUrl(audioUrl, taskId)
+  return direct || proxiedAudioUrl(audioUrl, taskId)
 }

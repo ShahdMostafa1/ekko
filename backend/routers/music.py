@@ -50,6 +50,12 @@ _task_audio_cache: dict[str, str] = {}
 
 # ── Plan limits (keep in sync with frontend/src/utils/planUtils.js) ─────────
 FREE_ARTISTS_PER_REGION = 2
+ARTIST_UNLOCK_XP_COST = 2500
+XP_ELIGIBLE_ARTISTS_PER_REGION = 5
+
+
+def _is_xp_eligible_artist_index(idx: int) -> bool:
+    return FREE_ARTISTS_PER_REGION <= idx < FREE_ARTISTS_PER_REGION + XP_ELIGIBLE_ARTISTS_PER_REGION
 PLAN_DAILY_LIMITS = {
     "free":   5,
     "groove": 50,
@@ -463,22 +469,67 @@ def _clamp_emotion_for_plan(emotion: str, plan: str) -> str:
     return NUANCED_TO_CORE.get(emotion, "neutral")
 
 
-def _is_artist_allowed_for_plan(artist_style_id: str, plan: str) -> bool:
+def _get_unlocked_artists(sb, user_id: str) -> list[str]:
+    if not sb or not user_id:
+        return []
+    try:
+        resp = sb.table("profiles").select("unlocked_artists").eq("id", user_id).execute()
+        if resp.data:
+            raw = resp.data[0].get("unlocked_artists")
+            if isinstance(raw, list):
+                return [str(x) for x in raw if x]
+    except Exception:
+        pass
+    return []
+
+
+def _get_profile_xp(sb, user_id: str) -> int:
+    if not sb or not user_id:
+        return 0
+    try:
+        resp = sb.table("profiles").select("xp").eq("id", user_id).execute()
+        if resp.data:
+            return int(resp.data[0].get("xp") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def _artist_style_meta(artist_style_id: str) -> tuple[str, int] | None:
+    """Return (region_key, index_in_region_list) for a style id."""
+    for region, styles in ARTIST_STYLES.items():
+        for idx, style in enumerate(styles):
+            if style["id"] == artist_style_id:
+                return region, idx
+    return None
+
+
+def _is_artist_allowed_for_plan(
+    artist_style_id: str,
+    plan: str,
+    unlocked_artists: list[str] | None = None,
+) -> bool:
     if not artist_style_id:
         return True
     if plan in ("groove", "studio"):
         return True
-    for styles in ARTIST_STYLES.values():
-        for idx, style in enumerate(styles):
-            if style["id"] == artist_style_id:
-                return idx < FREE_ARTISTS_PER_REGION
+    unlocked_artists = unlocked_artists or []
+    if artist_style_id in unlocked_artists:
+        return True
+    meta = _artist_style_meta(artist_style_id)
+    if meta:
+        _, idx = meta
+        return idx < FREE_ARTISTS_PER_REGION
     return False
 
 
-def _apply_plan_restrictions(req: "GenerateRequest", plan: str) -> None:
+def _apply_plan_restrictions(req: "GenerateRequest", plan: str, sb=None) -> None:
     if plan in ("groove", "studio"):
         return
-    if req.artist_style_id and not _is_artist_allowed_for_plan(req.artist_style_id, plan):
+    unlocked = _get_unlocked_artists(sb, req.user_id) if req.user_id else []
+    if req.artist_style_id and not _is_artist_allowed_for_plan(
+        req.artist_style_id, plan, unlocked
+    ):
         req.artist_style_id = ""
     if req.region not in FREE_REGION_IDS:
         req.region = "global"
@@ -675,25 +726,59 @@ class SaveSongRequest(BaseModel):
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-def _styles_with_unlock_flags(styles: list, plan: str) -> list:
+def _styles_with_unlock_flags(
+    styles: list,
+    plan: str,
+    unlocked_artists: list[str] | None = None,
+) -> list:
     paid = plan in ("groove", "studio")
+    unlocked_artists = unlocked_artists or []
     out = []
     for idx, style in enumerate(styles):
-        row = {**style, "unlocked": paid or idx < FREE_ARTISTS_PER_REGION}
+        free_tier = idx < FREE_ARTISTS_PER_REGION
+        xp_unlocked = style["id"] in unlocked_artists
+        is_unlocked = paid or free_tier or xp_unlocked
+        unlockable_with_xp = (
+            not paid
+            and not free_tier
+            and not xp_unlocked
+            and _is_xp_eligible_artist_index(idx)
+        )
+        row = {
+            **style,
+            "unlocked": is_unlocked,
+            "free_tier": free_tier,
+            "unlockable_with_xp": unlockable_with_xp,
+            "xp_unlock_cost": ARTIST_UNLOCK_XP_COST,
+        }
         out.append(row)
     return out
 
 
 @router.get("/artist-styles", summary="List artist-style personas per region")
-async def list_artist_styles(region: str = "", plan: str = "free"):
+async def list_artist_styles(
+    region: str = "",
+    plan: str = "free",
+    user_id: str = "",
+):
+    sb = _get_supabase()
+    unlocked = _get_unlocked_artists(sb, user_id) if user_id else []
+    user_xp = _get_profile_xp(sb, user_id) if user_id else 0
+    meta = {
+        "free_limit": FREE_ARTISTS_PER_REGION,
+        "xp_unlock_cost": ARTIST_UNLOCK_XP_COST,
+        "xp_eligible_per_region": XP_ELIGIBLE_ARTISTS_PER_REGION,
+        "user_xp": user_xp,
+        "unlocked_artists": unlocked,
+    }
     styles = ARTIST_STYLES.get(region, ARTIST_STYLES["global"]) if region else []
     if region:
         return {
             "region": region,
-            "styles": _styles_with_unlock_flags(styles, plan),
-            "free_limit": FREE_ARTISTS_PER_REGION,
+            "styles": _styles_with_unlock_flags(styles, plan, unlocked),
+            **meta,
         }
-    return {"styles": ARTIST_STYLES, "free_limit": FREE_ARTISTS_PER_REGION}
+    return {"styles": ARTIST_STYLES, **meta}
 
 
 @router.post("/generate", summary="Generate lyrics + Sonauto song with artist style")
@@ -717,7 +802,7 @@ async def generate_music(req: GenerateRequest):
                     },
                 )
 
-    _apply_plan_restrictions(req, plan)
+    _apply_plan_restrictions(req, plan, sb)
 
     mood_label   = req.mood_label or req.emotion
     region_label = REGION_DISPLAY.get(req.region, req.region)
@@ -832,8 +917,10 @@ async def get_status(task_id: str):
         audio_url = _extract_audio_url(data)
         if audio_url:
             audio_url = _normalize_audio_url(audio_url) or audio_url
-        if audio_url and not _is_allowed_audio_url(audio_url):
-            print(f"[music] WARN success but URL host odd: {urlparse(audio_url).netloc} url={audio_url[:100]}")
+            if _is_allowed_audio_url(audio_url):
+                _task_audio_cache[task_id] = audio_url
+            else:
+                print(f"[music] WARN success but audio host not allowed: {urlparse(audio_url).netloc}")
         return {
             "status": "SUCCESS",
             "audio_url": audio_url,
@@ -897,6 +984,44 @@ async def get_usage(user_id: str):
     }
 
 
+def _find_song_by_task_id(sb, user_id: str, task_id: str):
+    if not task_id:
+        return None
+    try:
+        resp = (
+            sb.table("songs")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("task_id", task_id)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if resp.data else None
+    except Exception:
+        return None
+
+
+def _save_song_response(sb, user_id: str, row: dict, license_type: str, *, duplicate: bool = False):
+    from routers.rewards import award_xp_idempotent, song_creation_session_key
+
+    song_id = row.get("id") if row else None
+    xp = {"awarded": False, "xp_awarded": 0, "total_xp": 0, "action": "music_cocreated"}
+    if song_id:
+        xp = award_xp_idempotent(
+            user_id,
+            "music_cocreated",
+            song_creation_session_key(str(song_id)),
+            sb,
+        )
+    return {
+        "saved": True,
+        "song": row,
+        "license": license_type,
+        "duplicate": duplicate,
+        **xp,
+    }
+
+
 @router.post("/save", summary="Save finished song to Supabase")
 async def save_song(req: SaveSongRequest):
     sb = _get_supabase()
@@ -904,6 +1029,13 @@ async def save_song(req: SaveSongRequest):
         return {"saved": False, "reason": "Supabase not configured"}
     plan = _get_user_plan(sb, req.user_id)
     license_type = _license_for_plan(plan)
+
+    if req.task_id:
+        existing = _find_song_by_task_id(sb, req.user_id, req.task_id)
+        if existing:
+            print(f"[music] Song already saved task={req.task_id} user={req.user_id}")
+            return _save_song_response(sb, req.user_id, existing, license_type, duplicate=True)
+
     row_data = {
         "user_id": req.user_id, "region": req.region,
         "region_label": req.region_label or REGION_DISPLAY.get(req.region, req.region),
@@ -914,12 +1046,14 @@ async def save_song(req: SaveSongRequest):
         "artist_style_id": req.artist_style_id, "artist_label": req.artist_label,
         "title": req.title, "is_favorite": False, "license": license_type,
     }
+    if req.task_id:
+        row_data["task_id"] = req.task_id
     # task_id column is optional — run backend/migrations/add_songs_task_id.sql first
     try:
         resp = sb.table("songs").insert(row_data).execute()
         row = (resp.data or [None])[0]
         print(f"[music] ✅ Song saved user={req.user_id} title={req.title} license={license_type}")
-        return {"saved": True, "song": row, "license": license_type}
+        return _save_song_response(sb, req.user_id, row, license_type)
     except Exception as e:
         err = str(e)
         fallback = {k: v for k, v in row_data.items() if k not in ("is_favorite", "license")}
@@ -933,7 +1067,7 @@ async def save_song(req: SaveSongRequest):
             resp = sb.table("songs").insert(fallback).execute()
             row = (resp.data or [None])[0]
             print(f"[music] ✅ Song saved (fallback columns) user={req.user_id}")
-            return {"saved": True, "song": row, "license": license_type}
+            return _save_song_response(sb, req.user_id, row, license_type)
         except Exception as e2:
             print(f"[music] ❌ Save failed: {e2}")
             return {"saved": False, "reason": str(e2)}

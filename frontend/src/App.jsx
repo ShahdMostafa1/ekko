@@ -14,8 +14,10 @@ import AdminDashboard      from './components/AdminDashboard'
 import Sidebar             from './components/Sidebar'
 import PlansScreen         from './components/PlansScreen'
 import DailyChallengeCTA   from './components/DailyChallengeCTA'
+import UpgradePlanCTA      from './components/UpgradePlanCTA'
 import StudySurvey         from './components/StudySurvey'
 import { wasDailyChallengeDismissed, markDailyChallengeDismissed } from './utils/dailyChallenges'
+import { wasUpgradeCtaDismissed, markUpgradeCtaDismissed } from './utils/upgradeCta'
 import { computeBadgeStats, getNewlyEarnedBadges, markBadgeAnnounced } from './utils/badges'
 import { fetchSurveyStatus, patchSurveyStatusCache, clearSurveyStatusCache, getCachedSurveyStatus } from './utils/tagline'
 import { useI18n } from './i18n/I18nContext.jsx'
@@ -25,7 +27,7 @@ import {
   secondsRemaining,
   progressPercent,
 } from './utils/generationProgress'
-import { hasPriorityQueue } from './utils/planUtils'
+import { hasPriorityQueue, isPaidPlan } from './utils/planUtils'
 import { ADMIN_EMAIL } from './utils/adminAuth'
 import './App.css'
 
@@ -138,6 +140,7 @@ export default function App() {
   const [userPlan, setUserPlan]                   = useState('free')
   const [sidebarOpen, setSidebarOpen]             = useState(false)
   const [showDailyChallenge, setShowDailyChallenge] = useState(false)
+  const [showUpgradeCta, setShowUpgradeCta]         = useState(false)
   const [badgeRefreshKey, setBadgeRefreshKey]       = useState(0)
   const [surveyPhase, setSurveyPhase]               = useState('pre')
   const [surveyLocked, setSurveyLocked]             = useState(false)
@@ -157,8 +160,12 @@ export default function App() {
   const userRef            = useRef(null)
   const homeRegionRef      = useRef(null)
   const dailyCtaTimerRef   = useRef(null)
+  const upgradeCtaTimerRef = useRef(null)
+  const userPlanRef        = useRef('free')
+  const rewardedSongsRef   = useRef(new Set())
   const navStackRef        = useRef([])
   const screenRef          = useRef('loading')
+  const postLoginOnboardingPendingRef = useRef(false)
 
   const NO_STACK_SCREENS = useRef(new Set(['loading', 'auth', 'admin', 'generating'])).current
 
@@ -236,24 +243,69 @@ export default function App() {
     }
   }, [])
 
-  const scheduleDailyChallenge = useCallback(async () => {
+  const ensurePostLoginOnboarding = useCallback(() => {
+    if (!postLoginOnboardingPendingRef.current) return
+    if (showUpgradeCta || showDailyChallenge) return
+    if (surveyLocked) return
+    const s = screenRef.current
+    if (['auth', 'loading', 'admin', 'generating', 'survey'].includes(s)) return
+    postLoginOnboardingPendingRef.current = false
+    navigateTo('onboarding', { reset: true })
+  }, [showUpgradeCta, showDailyChallenge, surveyLocked, navigateTo])
+
+  useEffect(() => {
+    ensurePostLoginOnboarding()
+  }, [showUpgradeCta, showDailyChallenge, surveyLocked, ensurePostLoginOnboarding])
+
+  const scheduleDailyChallenge = useCallback(async (delayMs = 1500) => {
     const currentUser = userRef.current
     if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
-    if (!currentUser || wasDailyChallengeDismissed(currentUser.id)) return
+    if (!currentUser || wasDailyChallengeDismissed(currentUser.id)) {
+      ensurePostLoginOnboarding()
+      return
+    }
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/rewards/daily-challenge/${currentUser.id}`)
       if (res.ok) {
         const data = await res.json()
-        if (data.completed) return
+        if (data.completed) {
+          ensurePostLoginOnboarding()
+          return
+        }
       }
     } catch { /* show CTA anyway */ }
-    dailyCtaTimerRef.current = setTimeout(() => setShowDailyChallenge(true), 1500)
-  }, [])
+    dailyCtaTimerRef.current = setTimeout(() => setShowDailyChallenge(true), delayMs)
+  }, [ensurePostLoginOnboarding])
+
+  const finishUpgradeCta = useCallback(() => {
+    const userId = userRef.current?.id
+    if (userId) markUpgradeCtaDismissed(userId)
+    setShowUpgradeCta(false)
+    scheduleDailyChallenge(800)
+  }, [scheduleDailyChallenge])
+
+  const scheduleAppOpenCTAs = useCallback(({ afterLogin = false } = {}) => {
+    const currentUser = userRef.current
+    if (upgradeCtaTimerRef.current) clearTimeout(upgradeCtaTimerRef.current)
+    if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
+    if (!currentUser) return
+    if (afterLogin) postLoginOnboardingPendingRef.current = true
+
+    const plan = userPlanRef.current || 'free'
+    const showUpgrade = !isPaidPlan(plan) && !wasUpgradeCtaDismissed(currentUser.id)
+
+    if (showUpgrade) {
+      upgradeCtaTimerRef.current = setTimeout(() => setShowUpgradeCta(true), 900)
+      return
+    }
+    scheduleDailyChallenge()
+  }, [scheduleDailyChallenge])
 
   useEffect(() => { moodDataRef.current = moodData  }, [moodData])
   useEffect(() => { regionRef.current   = region    }, [region])
   useEffect(() => { languageRef.current = language  }, [language])
   useEffect(() => { userRef.current     = user      }, [user])
+  useEffect(() => { userPlanRef.current = userPlan  }, [userPlan])
 
   useEffect(() => {
     if (screen !== 'generating') {
@@ -296,7 +348,10 @@ export default function App() {
       .select('plan')
       .eq('id', currentUser.id)
       .single()
-    if (data?.plan) setUserPlan(data.plan)
+    if (data?.plan) {
+      setUserPlan(data.plan)
+      userPlanRef.current = data.plan
+    }
   }, [])
 
   const generateMusic = useCallback(async (params, finalScale, finalInstr) => {
@@ -364,10 +419,19 @@ export default function App() {
     navigateTo('player')
   }, [navigateTo])
 
-  const handleSongSaved = useCallback(async (savedSongId) => {
-    const songKey = savedSongId || songSessionIdRef.current
-    if (!songKey) return
-    await addXp('music_cocreated', `music_cocreated:${songKey}`)
+  const handleSongSaved = useCallback(async (payload) => {
+    const songId = payload?.songId || (typeof payload === 'string' ? payload : null)
+    if (!songId) return
+    const songKey = String(songId)
+    if (rewardedSongsRef.current.has(songKey)) return
+    rewardedSongsRef.current.add(songKey)
+
+    const xpPayload = payload?.xp
+    if (xpPayload?.awarded) {
+      setXp(xpPayload.total_xp)
+      showReward(`+${xpPayload.xp_awarded} XP`, 'Song created')
+    }
+
     await tryClaimDailyChallenge('song_saved')
     const currentUser = userRef.current
     if (!currentUser) return
@@ -390,7 +454,7 @@ export default function App() {
       const stats = computeBadgeStats({
         songs: data.songs || [],
         moodLogs: [],
-        xp,
+        xp: xpPayload?.total_xp ?? xp,
         nightOwlAlsoAt: saveTime,
       })
       const newlyEarned = getNewlyEarnedBadges(stats, currentUser.id)
@@ -415,7 +479,7 @@ export default function App() {
       setRegion(null)
     }
     navigateTo('onboarding', { reset: true })
-    scheduleDailyChallenge()
+    scheduleAppOpenCTAs({ afterLogin: true })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const goToPreSurvey = useCallback(() => {
@@ -431,15 +495,16 @@ export default function App() {
 
     if (!status.pre_done) {
       goToPreSurvey()
-      scheduleDailyChallenge()
+      scheduleAppOpenCTAs()
       return
     }
 
     if (screenRef.current === 'loading' || screenRef.current === 'auth') {
       routeToAppHome(profile)
+      return
     }
-    scheduleDailyChallenge()
-  }, [routeToAppHome, goToPreSurvey])
+    scheduleAppOpenCTAs()
+  }, [routeToAppHome, goToPreSurvey, scheduleAppOpenCTAs])
 
   const handleSurveyComplete = useCallback(async (phase) => {
     const userId = userRef.current?.id
@@ -514,7 +579,9 @@ export default function App() {
       setXp(profile.xp || 0)
       regionXpAwardedRef.current = !!profile.region_xp_awarded
       homeRegionRef.current = profile.region || 'global'
-      setUserPlan(profile.plan || 'free')
+      const plan = profile.plan || 'free'
+      setUserPlan(plan)
+      userPlanRef.current = plan
       const name = profile.full_name
         || authUser.user_metadata?.full_name
         || authUser.user_metadata?.name
@@ -538,7 +605,10 @@ export default function App() {
         pendingGenRef.current = null
         moodSessionIdRef.current = null; songSessionIdRef.current = null
         setShowDailyChallenge(false)
+        setShowUpgradeCta(false)
+        rewardedSongsRef.current.clear()
         if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
+        if (upgradeCtaTimerRef.current) clearTimeout(upgradeCtaTimerRef.current)
         navStackRef.current = []
         navigateTo('auth', { reset: true })
         return
@@ -556,6 +626,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe()
       if (dailyCtaTimerRef.current) clearTimeout(dailyCtaTimerRef.current)
+      if (upgradeCtaTimerRef.current) clearTimeout(upgradeCtaTimerRef.current)
       if (surveyGateTimerRef.current) clearTimeout(surveyGateTimerRef.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -572,7 +643,9 @@ export default function App() {
     if (authUser.email === ADMIN_EMAIL) { navigateTo('admin', { reset: true }); return }
     setXp(profile?.xp || 0)
     regionXpAwardedRef.current = !!profile?.region_xp_awarded
-    setUserPlan(profile?.plan || 'free')
+    const plan = profile?.plan || 'free'
+    setUserPlan(plan)
+    userPlanRef.current = plan
     const name = profile?.full_name
       || authUser.user_metadata?.full_name
       || authUser.user_metadata?.name
@@ -814,6 +887,13 @@ export default function App() {
             region={region}
             language={language}
             userPlan={userPlan}
+            userId={userRef.current?.id || user?.id || ''}
+            userXp={xp}
+            onXpUpdate={setXp}
+            onArtistUnlocked={({ totalXp, label, spent }) => {
+              setXp(totalXp)
+              showReward(`-${spent} XP`, `${label} unlocked!`)
+            }}
             onUpgrade={goToPlans}
             onGenerate={handleCoCreate}
           />
@@ -845,7 +925,7 @@ export default function App() {
               params={musicParams}
               userPlan={userPlan}
               onUpgrade={goToPlans}
-              onSaved={(savedSongId) => handleSongSaved(savedSongId || songSessionIdRef.current)}
+              onSaved={handleSongSaved}
               onDone={goToPostSurvey}
             />
           </div>
@@ -871,7 +951,10 @@ export default function App() {
         {screen === 'plans' && (
           <PlansScreen
             onClose={() => { refreshUserPlan(); goBack() }}
-            onPlanChange={setUserPlan}
+            onPlanChange={(plan) => {
+              setUserPlan(plan)
+              userPlanRef.current = plan
+            }}
           />
         )}
 
@@ -898,13 +981,24 @@ export default function App() {
       {/* XP reward toast */}
       {reward && <RewardBadge label={reward.label} sub={reward.sub} />}
 
+      {/* Upgrade CTA — free users, once per day, before daily challenge */}
+      {showUpgradeCta && !surveyLocked && !['auth', 'loading', 'admin', 'generating'].includes(screen) && (
+        <UpgradePlanCTA
+          onUpgrade={() => {
+            finishUpgradeCta()
+            goToPlans()
+          }}
+          onDismiss={finishUpgradeCta}
+        />
+      )}
+
       {/* Daily Challenge CTA — once per day on login */}
-      {showDailyChallenge && !surveyLocked && !['auth', 'loading', 'admin', 'generating'].includes(screen) && (
+      {showDailyChallenge && !showUpgradeCta && !surveyLocked && !['auth', 'loading', 'admin', 'generating'].includes(screen) && (
         <DailyChallengeCTA
           userId={userRef.current?.id || user?.id}
           onAccept={() => {
             setShowDailyChallenge(false)
-            navigateTo('mood')
+            ensurePostLoginOnboarding()
           }}
           onDismiss={() => {
             markDailyChallengeDismissed(userRef.current?.id || user?.id)

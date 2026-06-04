@@ -1,5 +1,12 @@
-import { useState, useEffect } from 'react'
-import { isArtistStyleUnlocked, isPaidPlan, FREE_ARTISTS_PER_REGION } from '../utils/planUtils'
+import { useState, useEffect, useCallback } from 'react'
+import { useI18n } from '../i18n/I18nContext.jsx'
+import {
+  isArtistUnlockedFromApi,
+  isPaidPlan,
+  FREE_ARTISTS_PER_REGION,
+  ARTIST_XP_UNLOCK_COST,
+  XP_ELIGIBLE_ARTISTS_PER_REGION,
+} from '../utils/planUtils'
 
 const INSTRUMENTS = [
   { id: 'piano',   emoji: '🎹', label: 'Piano'   },
@@ -44,33 +51,71 @@ function bestRegionForLanguage(langCode, currentRegion) {
   return 'global'
 }
 
-export default function CoCreation({ mood, regionDefaults, region, language, userPlan = 'free', onUpgrade, onGenerate }) {
+export default function CoCreation({
+  mood,
+  regionDefaults,
+  region,
+  language,
+  userPlan = 'free',
+  userId = '',
+  userXp = 0,
+  onXpUpdate,
+  onArtistUnlocked,
+  onUpgrade,
+  onGenerate,
+}) {
+  const { t } = useI18n()
   const [tempo, setTempo]               = useState(mood?.energy > 0.5 ? 110 : 72)
   const [selectedScale, setScale]       = useState(mood?.valence > 0.5 ? 'C major' : 'D minor')
   const [selectedInstr, setInstr]       = useState(regionDefaults?.instruments?.slice(0, 2) || ['piano', 'strings'])
   const [artistStyles, setArtistStyles] = useState([])
   const [selectedArtist, setArtist]     = useState('')
   const [loadingStyles, setLoadingStyles] = useState(false)
+  const [unlockMeta, setUnlockMeta]     = useState({
+    xp_unlock_cost: ARTIST_XP_UNLOCK_COST,
+    xp_eligible_per_region: XP_ELIGIBLE_ARTISTS_PER_REGION,
+    user_xp: userXp,
+  })
+  const [unlockModal, setUnlockModal]   = useState(null)
+  const [unlockBusy, setUnlockBusy]       = useState(false)
+  const [unlockError, setUnlockError]     = useState('')
 
   // Derive which region's artists to show based on the chosen language,
   // not just the cultural region the user picked.
   const artistRegion = bestRegionForLanguage(language?.code, region?.id)
 
-  useEffect(() => {
+  const loadArtistStyles = useCallback(() => {
     if (!artistRegion) return
     setLoadingStyles(true)
-    setArtist('') // reset whenever language changes
-    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?region=${artistRegion}&plan=${encodeURIComponent(userPlan || 'free')}`)
+    const q = new URLSearchParams({
+      region: artistRegion,
+      plan: userPlan || 'free',
+    })
+    if (userId) q.set('user_id', userId)
+    fetch(`${import.meta.env.VITE_API_URL}/music/artist-styles?${q}`)
       .then(r => r.json())
-      .then(data => setArtistStyles(data.styles || []))
+      .then(data => {
+        setArtistStyles(data.styles || [])
+        setUnlockMeta({
+          xp_unlock_cost: data.xp_unlock_cost ?? ARTIST_XP_UNLOCK_COST,
+          xp_eligible_per_region: data.xp_eligible_per_region ?? XP_ELIGIBLE_ARTISTS_PER_REGION,
+          user_xp: data.user_xp ?? userXp,
+        })
+      })
       .catch(() => setArtistStyles([]))
       .finally(() => setLoadingStyles(false))
-  }, [artistRegion, userPlan])
+  }, [artistRegion, userPlan, userId, userXp])
+
+  useEffect(() => {
+    setArtist('')
+    loadArtistStyles()
+  }, [loadArtistStyles])
 
   useEffect(() => {
     if (!selectedArtist) return
-    const idx = artistStyles.findIndex(a => a.id === selectedArtist)
-    if (idx >= 0 && !isArtistStyleUnlocked(idx, userPlan)) setArtist('')
+    const a = artistStyles.find(x => x.id === selectedArtist)
+    const idx = artistStyles.findIndex(x => x.id === selectedArtist)
+    if (a && !isArtistUnlockedFromApi(a, idx, userPlan)) setArtist('')
   }, [artistStyles, userPlan, selectedArtist])
 
   const toggleInstr = (id) => {
@@ -91,14 +136,86 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
   const paidPlan = isPaidPlan(userPlan)
 
   const handleGenerate = () => {
-    const idx = artistStyles.findIndex(a => a.id === selectedArtist)
-    const artistOk = !selectedArtist || isArtistStyleUnlocked(idx, userPlan)
+    const a = artistStyles.find(x => x.id === selectedArtist)
+    const idx = artistStyles.findIndex(x => x.id === selectedArtist)
+    const artistOk = !selectedArtist || isArtistUnlockedFromApi(a, idx, userPlan)
     onGenerate({
       tempo_bpm:       tempo,
       scale:           selectedScale,
       instruments:     selectedInstr,
       artist_style_id: artistOk ? selectedArtist : '',
     })
+  }
+
+  const handleArtistClick = (a, idx) => {
+    if (isArtistUnlockedFromApi(a, idx, userPlan)) {
+      setArtist(a.id)
+      return
+    }
+    if (isPaidPlan(userPlan)) {
+      onUpgrade?.()
+      return
+    }
+    if (a.unlockable_with_xp) {
+      const cost = unlockMeta.xp_unlock_cost || ARTIST_XP_UNLOCK_COST
+      const xp = unlockMeta.user_xp ?? userXp
+      if (xp < cost) {
+        setUnlockModal({ type: 'earn', artist: a, cost, xp })
+        return
+      }
+      setUnlockModal({ type: 'confirm', artist: a, cost, xp })
+      return
+    }
+    setUnlockModal({ type: 'plan', artist: a })
+  }
+
+  const confirmUnlock = async () => {
+    if (!unlockModal?.artist || !userId) return
+    setUnlockBusy(true)
+    setUnlockError('')
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/rewards/unlock-artist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          artist_style_id: unlockModal.artist.id,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        const msg = data?.detail?.message || data?.detail || data?.message || 'Unlock failed'
+        if (data?.detail?.error === 'insufficient_xp') {
+          setUnlockModal({
+            type: 'earn',
+            artist: unlockModal.artist,
+            cost: data.detail.required || ARTIST_XP_UNLOCK_COST,
+            xp: data.detail.current ?? userXp,
+          })
+          return
+        }
+        if (data?.detail?.error === 'plan_required') {
+          setUnlockModal({ type: 'plan', artist: unlockModal.artist })
+          return
+        }
+        setUnlockError(typeof msg === 'string' ? msg : 'Could not unlock artist')
+        return
+      }
+      onXpUpdate?.(data.total_xp)
+      onArtistUnlocked?.({
+        totalXp: data.total_xp,
+        label: data.artist_label || unlockModal.artist.label,
+        spent: data.xp_spent,
+      })
+      setUnlockMeta(prev => ({ ...prev, user_xp: data.total_xp }))
+      setUnlockModal(null)
+      setArtist(data.artist_style_id)
+      loadArtistStyles()
+    } catch {
+      setUnlockError('Could not unlock artist. Try again.')
+    } finally {
+      setUnlockBusy(false)
+    }
   }
 
   const selectedArtistObj = artistStyles.find(a => a.id === selectedArtist)
@@ -127,8 +244,13 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
         </div>
         {!paidPlan && (
           <p className="cc-lock-note">
-            Free includes {FREE_ARTISTS_PER_REGION} artists per region.{' '}
-            <button type="button" className="cc-upgrade-link" onClick={() => onUpgrade?.()}>Unlock all with Groove</button>
+            {t('cocreate.artistUnlockNote', {
+              count: unlockMeta.xp_eligible_per_region ?? XP_ELIGIBLE_ARTISTS_PER_REGION,
+              cost: unlockMeta.xp_unlock_cost ?? ARTIST_XP_UNLOCK_COST,
+            })}{' '}
+            <button type="button" className="cc-upgrade-link" onClick={() => onUpgrade?.()}>
+              Groove
+            </button>
           </p>
         )}
         {loadingStyles ? (
@@ -144,16 +266,22 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
               <span className="cao-desc">AI chooses</span>
             </button>
             {artistStyles.map((a, idx) => {
-              const unlocked = a.unlocked ?? isArtistStyleUnlocked(idx, userPlan)
+              const unlocked = isArtistUnlockedFromApi(a, idx, userPlan)
+              const showXp = !unlocked && a.unlockable_with_xp
               return (
               <button
                 key={a.id}
+                type="button"
                 className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''} ${unlocked ? '' : 'locked'}`}
-                onClick={() => unlocked ? setArtist(a.id) : onUpgrade?.()}
+                onClick={() => handleArtistClick(a, idx)}
               >
-                <span className="cao-emoji">{unlocked ? '🎤' : '🔒'}</span>
+                <span className="cao-emoji">{unlocked ? '🎤' : showXp ? '✨' : '🔒'}</span>
                 <span className="cao-label">{a.label}</span>
-                <span className="cao-desc">{a.description}</span>
+                <span className="cao-desc">
+                  {showXp
+                    ? t('cocreate.artistXpBadge', { cost: a.xp_unlock_cost || ARTIST_XP_UNLOCK_COST })
+                    : a.description}
+                </span>
               </button>
             )})}
           </div>
@@ -217,6 +345,64 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
         </div>
       </div>
 
+      {unlockModal && (
+        <div className="cc-unlock-backdrop" role="dialog" aria-modal="true">
+          <div className="cc-unlock-card">
+            {unlockModal.type === 'confirm' && (
+              <>
+                <h3 className="cc-unlock-title">
+                  {t('cocreate.unlockTitle', { name: unlockModal.artist.label })}
+                </h3>
+                <p className="cc-unlock-body">
+                  {t('cocreate.unlockBody', {
+                    cost: unlockModal.cost,
+                    xp: unlockModal.xp,
+                  })}
+                </p>
+                {unlockError && <p className="cc-unlock-err">{unlockError}</p>}
+                <div className="cc-unlock-actions">
+                  <button type="button" className="cc-unlock-secondary" onClick={() => setUnlockModal(null)} disabled={unlockBusy}>
+                    {t('cocreate.unlockCancel')}
+                  </button>
+                  <button type="button" className="cc-unlock-primary" onClick={confirmUnlock} disabled={unlockBusy}>
+                    {unlockBusy ? t('cocreate.unlocking') : t('cocreate.unlockConfirm', { cost: unlockModal.cost })}
+                  </button>
+                </div>
+              </>
+            )}
+            {unlockModal.type === 'earn' && (
+              <>
+                <h3 className="cc-unlock-title">{t('cocreate.earnXpTitle')}</h3>
+                <p className="cc-unlock-body">
+                  {t('cocreate.earnXpBody', { cost: unlockModal.cost })}
+                </p>
+                <button type="button" className="cc-unlock-primary" onClick={() => setUnlockModal(null)}>
+                  {t('cocreate.earnXpCta')}
+                </button>
+              </>
+            )}
+            {unlockModal.type === 'plan' && (
+              <>
+                <h3 className="cc-unlock-title">{t('cocreate.planOnlyTitle')}</h3>
+                <p className="cc-unlock-body">
+                  {t('cocreate.planOnlyBody', {
+                    count: unlockMeta.xp_eligible_per_region ?? XP_ELIGIBLE_ARTISTS_PER_REGION,
+                  })}
+                </p>
+                <div className="cc-unlock-actions">
+                  <button type="button" className="cc-unlock-secondary" onClick={() => setUnlockModal(null)}>
+                    {t('cocreate.unlockCancel')}
+                  </button>
+                  <button type="button" className="cc-unlock-primary" onClick={() => { setUnlockModal(null); onUpgrade?.() }}>
+                    {t('cocreate.planOnlyCta')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <button className="cc-cta" onClick={handleGenerate}>
         {selectedArtistObj
           ? `Generate in ${selectedArtistObj.label} style →`
@@ -272,6 +458,34 @@ export default function CoCreation({ mood, regionDefaults, region, language, use
         .cc-artist-opt.locked { opacity: 0.55; cursor: pointer; }
         .cc-artist-grid--locked .cc-artist-opt:not(:first-child):hover {
           border-color: rgba(167, 139, 250, 0.4);
+        }
+        .cc-unlock-backdrop {
+          position: fixed; inset: 0; z-index: 200;
+          background: rgba(8, 6, 18, 0.72);
+          display: flex; align-items: center; justify-content: center;
+          padding: 20px;
+        }
+        .cc-unlock-card {
+          max-width: 360px; width: 100%;
+          background: linear-gradient(160deg, #1a1430, #120e22);
+          border: 1.5px solid rgba(124, 92, 231, 0.45);
+          border-radius: 18px; padding: 22px 20px;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+        }
+        .cc-unlock-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #e9d5ff; }
+        .cc-unlock-body { margin: 0 0 16px; font-size: 14px; line-height: 1.55; color: #b09ee0; }
+        .cc-unlock-err { margin: 0 0 10px; font-size: 12px; color: #fca5a5; }
+        .cc-unlock-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+        .cc-unlock-primary, .cc-unlock-secondary {
+          border-radius: 12px; padding: 10px 16px; font-size: 13px; font-weight: 700;
+          cursor: pointer; font-family: inherit; border: none;
+        }
+        .cc-unlock-primary {
+          background: #7c5ce7; color: #fff;
+        }
+        .cc-unlock-secondary {
+          background: rgba(255,255,255,0.08); color: #c4b5f0;
+          border: 1px solid rgba(176,158,224,.25);
         }
       `}</style>
     </div>

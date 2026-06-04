@@ -82,6 +82,11 @@ class DailyChallengeClaimRequest(BaseModel):
     trigger: str = ""   # mood_shared | quiz_used | region_changed | song_saved
 
 
+class UnlockArtistRequest(BaseModel):
+    user_id: str
+    artist_style_id: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _today_challenge_id() -> str:
@@ -215,6 +220,154 @@ def _add_xp_to_profile(user_id: str, amount: int, sb):
         sb.table("profiles").update({"xp": current_xp + amount}).eq("id", user_id).execute()
 
 
+def _current_profile_xp(user_id: str, sb) -> int:
+    if sb:
+        profile = sb.table("profiles").select("xp").eq("id", user_id).execute()
+        return profile.data[0]["xp"] if profile.data else 0
+    return _local_rewards.get(user_id, {}).get("points", 0)
+
+
+def song_creation_session_key(song_id: str) -> str:
+    """One XP award per saved song row."""
+    return f"song_created:{song_id}"
+
+
+def award_xp_idempotent(user_id: str, action: str, session_key: str, sb=None) -> dict:
+    """Award XP once per (user_id, session_key). Safe to call repeatedly."""
+    if action not in XP_AMOUNTS:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {action}. Valid: {list(XP_AMOUNTS.keys())}")
+    if sb is None:
+        sb = _get_supabase()
+
+    xp_amount = XP_AMOUNTS[action]
+    if _was_awarded(user_id, session_key, sb):
+        return {
+            "awarded":    False,
+            "reason":     "already_awarded",
+            "xp_awarded": 0,
+            "total_xp":   _current_profile_xp(user_id, sb),
+            "action":     action,
+        }
+
+    _mark_awarded(user_id, session_key, action, xp_amount, sb)
+    _add_xp_to_profile(user_id, xp_amount, sb)
+
+    if not sb:
+        local = _local_rewards.get(user_id, {"points": 0})
+        local["points"] = local.get("points", 0) + xp_amount
+        _local_rewards[user_id] = local
+
+    return {
+        "awarded":    True,
+        "xp_awarded": xp_amount,
+        "total_xp":   _current_profile_xp(user_id, sb),
+        "action":     action,
+    }
+
+
+# ── Artist unlock (XP) ────────────────────────────────────────────────────────
+
+@router.post("/unlock-artist", summary="Unlock artist with XP (list positions 3–7 only)")
+async def unlock_artist(req: UnlockArtistRequest):
+    from routers.music import (
+        ARTIST_STYLES,
+        ARTIST_UNLOCK_XP_COST,
+        FREE_ARTISTS_PER_REGION,
+        _artist_style_meta,
+        _get_unlocked_artists,
+        _get_profile_xp,
+        _is_xp_eligible_artist_index,
+    )
+
+    sb = _get_supabase()
+    if not sb:
+        raise HTTPException(503, "Database unavailable")
+
+    meta = _artist_style_meta(req.artist_style_id)
+    if not meta:
+        raise HTTPException(404, detail="Unknown artist style")
+
+    _, idx = meta
+    if idx < FREE_ARTISTS_PER_REGION:
+        raise HTTPException(400, detail="Artist already included on Free plan")
+    if not _is_xp_eligible_artist_index(idx):
+        raise HTTPException(
+            403,
+            detail={
+                "error": "plan_required",
+                "message": "This artist is only available on Groove or Studio.",
+            },
+        )
+
+    unlocked = _get_unlocked_artists(sb, req.user_id)
+    if req.artist_style_id in unlocked:
+        return {
+            "ok": True,
+            "already_unlocked": True,
+            "artist_style_id": req.artist_style_id,
+            "unlocked_artists": unlocked,
+            "total_xp": _get_profile_xp(sb, req.user_id),
+            "xp_spent": 0,
+        }
+
+    session_key = f"artist_unlock:{req.artist_style_id}"
+    if _was_awarded(req.user_id, session_key, sb):
+        return {
+            "ok": True,
+            "already_unlocked": True,
+            "artist_style_id": req.artist_style_id,
+            "unlocked_artists": unlocked,
+            "total_xp": _get_profile_xp(sb, req.user_id),
+            "xp_spent": 0,
+        }
+
+    current_xp = _get_profile_xp(sb, req.user_id)
+    if current_xp < ARTIST_UNLOCK_XP_COST:
+        raise HTTPException(
+            400,
+            detail={
+                "error": "insufficient_xp",
+                "message": "Generate more music and complete challenges to earn XP.",
+                "required": ARTIST_UNLOCK_XP_COST,
+                "current": current_xp,
+            },
+        )
+
+    new_xp = current_xp - ARTIST_UNLOCK_XP_COST
+    unlocked.append(req.artist_style_id)
+    try:
+        sb.table("profiles").update({
+            "xp": new_xp,
+            "unlocked_artists": unlocked,
+        }).eq("id", req.user_id).execute()
+        sb.table("xp_events").insert({
+            "user_id": req.user_id,
+            "action": "artist_unlock",
+            "xp": -ARTIST_UNLOCK_XP_COST,
+            "session_key": session_key,
+        }).execute()
+        _awarded_keys.add(f"{req.user_id}:{session_key}")
+    except Exception as e:
+        raise HTTPException(500, f"Could not unlock artist: {e}") from e
+
+    label = req.artist_style_id
+    for styles in ARTIST_STYLES.values():
+        for s in styles:
+            if s["id"] == req.artist_style_id:
+                label = s["label"]
+                break
+
+    return {
+        "ok": True,
+        "already_unlocked": False,
+        "artist_style_id": req.artist_style_id,
+        "artist_label": label,
+        "unlocked_artists": unlocked,
+        "total_xp": new_xp,
+        "xp_spent": ARTIST_UNLOCK_XP_COST,
+    }
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/checkin", summary="Daily mood check-in (Layer 5)")
@@ -297,48 +450,11 @@ async def award_xp(req: XpRequest):
 
     session_key should be unique per occurrence, e.g.:
       - "mood_shared:{mood_session_id}"
-      - "music_cocreated:{mood_session_id}"
+      - "song_created:{song_uuid}"   (one music_cocreated award per saved song)
       - "region_selected:{user_id}"   (only once ever)
     """
-    if req.action not in XP_AMOUNTS:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}. Valid: {list(XP_AMOUNTS.keys())}")
-
-    xp_amount = XP_AMOUNTS[req.action]
     sb = _get_supabase()
-
-    if _was_awarded(req.user_id, req.session_key, sb):
-        # Already awarded — return current XP without adding more
-        if sb:
-            profile = sb.table("profiles").select("xp").eq("id", req.user_id).execute()
-            current_xp = profile.data[0]["xp"] if profile.data else 0
-        else:
-            current_xp = _local_rewards.get(req.user_id, {}).get("points", 0)
-        return {
-            "awarded":     False,
-            "reason":      "Already awarded for this session_key",
-            "xp_awarded":  0,
-            "total_xp":    current_xp,
-        }
-
-    # Award XP
-    _mark_awarded(req.user_id, req.session_key, req.action, xp_amount, sb)
-    _add_xp_to_profile(req.user_id, xp_amount, sb)
-
-    if sb:
-        profile = sb.table("profiles").select("xp").eq("id", req.user_id).execute()
-        total_xp = profile.data[0]["xp"] if profile.data else xp_amount
-    else:
-        local = _local_rewards.get(req.user_id, {"points": 0})
-        local["points"] = local.get("points", 0) + xp_amount
-        _local_rewards[req.user_id] = local
-        total_xp = local["points"]
-
-    return {
-        "awarded":    True,
-        "xp_awarded": xp_amount,
-        "total_xp":   total_xp,
-        "action":     req.action,
-    }
+    return award_xp_idempotent(req.user_id, req.action, req.session_key, sb)
 
 
 @router.get("/daily-challenge/{user_id}", summary="Today's daily challenge status")

@@ -29,7 +29,7 @@ Sign in → Pre-test survey → Pick region → Pick language → Share mood →
 2. **Onboarding** — Choose one of 7 cultural regions (Free: Global Mix only; paid: all regions).
 3. **Language** — Pick lyrics language for the selected region.
 4. **Mood** — Voice, text, quiz, or tap a mood emoji. Free gets 7 core moods; Groove/Studio get all 20.
-5. **Co-creation** — Tempo, scale, instruments. Artist styles are Groove/Studio only.
+5. **Co-creation** — Tempo, scale, instruments, optional artist style (see [Artist unlock](#artist-unlock-xp--plans) below).
 6. **Generate** — Backend writes lyrics and sends a job to Sonauto; the player polls until audio is ready.
 7. **Save & listen** — Songs auto-save to Supabase. Download is Groove/Studio only.
 8. **Post-test survey** — After creating a song, tap **Done — continue →** on the player to complete the post-test (experience ratings, cultural fit, recommendations).
@@ -44,6 +44,32 @@ Sign in → Mood → Co-create → Generate → Listen & save → History / Rewa
 Returning users skip surveys unless they open **Sidebar → Study** manually.
 
 Plan limits are enforced on **both** frontend (UI locks) and backend (generate/save/API).
+
+### Login flow (returning users)
+
+After sign-in (pre-survey done), users land on the **region picker**. Optional overlays appear first:
+
+1. **UpgradePlanCTA** (free, once per user until dismissed)
+2. **DailyChallengeCTA** (once per day)
+
+When both are closed, the app stays on (or returns to) **onboarding** (region picker). Accepting the daily challenge also returns to onboarding (not mood).
+
+---
+
+## Artist unlock (XP + plans)
+
+Each region’s artist list is ordered. Unlock rules (keep in sync: `planUtils.js`, `music.py`, `rewards.py`):
+
+| List position | Index | Free | Groove / Studio |
+|---|---|---|---|
+| First two artists | 0–1 | Included | Included |
+| Next five artists | 2–6 | **2,500 XP** each (permanent unlock) | Included |
+| Remaining artists | 7+ | Upgrade required | Included |
+
+- **Not** every artist costs XP — only positions **3–7** in the list (indices 2–6).
+- Artists from position **8** onward are **plan-only** (same as before Groove gating).
+- Insufficient XP → UI prompts user to create/save songs and earn rewards.
+- Unlocks stored in `profiles.unlocked_artists`; enforced on `GET /music/artist-styles` and `POST /music/generate`.
 
 ---
 
@@ -71,7 +97,7 @@ Plan limits are enforced on **both** frontend (UI locks) and backend (generate/s
 | **Generations** | 5 / day | 50 / day | Unlimited |
 | **Regions** | Global Mix | All 7 | All 7 |
 | **Moods** | 7 core | All 20 | All 20 |
-| **Artist styles** | No | Yes | Yes |
+| **Artist styles** | 2 free + 5 XP slots per region list; rest paid | All | All |
 | **Download** | No | Yes | Yes |
 | **Song history** | Last 10 | Full | Full |
 | **Audio** | Standard | HD | HD |
@@ -94,7 +120,7 @@ Single source of truth for limits on the frontend:
 | Daily generations | 5/day, 429 when exceeded | `POST /music/generate`, `GET /music/usage/{user_id}` |
 | Regions | Global only; others dimmed + lock | `Onboarding.jsx`, backend strips region on generate |
 | Moods | 7 emoji quick-picks + 13 locked | `MoodInput.jsx`, backend clamps emotion |
-| Artist styles | Default only | `CoCreation.jsx`, backend clears `artist_style_id` |
+| Artist styles | 2 free; slots 3–7 = 2,500 XP each; slot 8+ = Groove | `CoCreation.jsx`, `POST /rewards/unlock-artist`, `music.py` on generate |
 | Download | Lock icon → Plans | `MusicPlayer.jsx`, `SongHistory.jsx` |
 | History | Last 10 + upgrade banner | `SongHistory.jsx` |
 | HD / priority | Standard / normal poll | Style prompt + `MusicPlayer.jsx` poll interval |
@@ -114,7 +140,7 @@ ekko/
 │   │   └── studio_api.py       # Blocks /api/v1/* without Studio key
 │   ├── routers/
 │   │   ├── mood.py             # STT, mood detect, mood logs
-│   │   ├── music.py            # Generate, save, history, usage, PATCH/DELETE
+│   │   ├── music.py            # Generate, save, stream proxy, artist-styles, usage
 │   │   ├── api_v1.py           # Studio REST API (generate, status, songs, usage)
 │   │   ├── rewards.py          # XP, streaks, badges, daily challenges
 │   │   ├── stripe_router.py    # Checkout, portal, webhooks, API keys
@@ -122,19 +148,25 @@ ekko/
 │   │   └── admin.py            # Admin users, songs, survey export
 │   └── migrations/
 │       ├── add_song_favorites.sql
+│       ├── add_songs_task_id.sql
+│       ├── add_profiles_unlocked_artists.sql
 │       ├── add_api_key.sql
-│       ├── add_study_surveys.sql
+│       ├── create_study_surveys_full.sql
 │       └── extend_study_surveys.sql
 │
 └── frontend/
     └── src/
-        ├── App.jsx             # Navigation, auth, survey routing, generate flow
-        ├── utils/planUtils.js  # Client-side plan helpers
+        ├── App.jsx             # Navigation, auth, CTAs, survey routing, generate flow
+        ├── utils/planUtils.js  # Plan + artist unlock helpers
+        ├── utils/audioProxy.js # CDN-first playback URLs
+        ├── utils/historyAudio.js # Shared <audio> for song history
+        ├── utils/upgradeCta.js # Upgrade modal dismiss state
         ├── utils/surveyQuestions.js  # Thesis survey definitions
         └── components/
             ├── Onboarding.jsx      # Region picker (plan-gated)
             ├── MoodInput.jsx       # Voice / text / quiz + emoji moods
-            ├── CoCreation.jsx      # Tempo, instruments, artist styles
+            ├── CoCreation.jsx      # Tempo, instruments, artist XP unlock UI
+            ├── UpgradePlanCTA.jsx  # Free-plan upsell on login
             ├── MusicPlayer.jsx     # Play, download, auto-save, Done → post-test
             ├── SongHistory.jsx     # Library, favourites, download
             ├── StudySurvey.jsx     # Pre/post UX research forms
@@ -159,12 +191,16 @@ Used by the React app. Most routes accept JSON; mood voice uses `multipart/form-
 | `POST` | `/mood/detect-text` | Text mood |
 | `POST` | `/music/generate` | Start song generation (`user_id` required for limits) |
 | `GET` | `/music/status/{task_id}` | Poll Sonauto job |
+| `GET` | `/music/stream?url=` | Proxy audio by CDN URL (preferred playback) |
+| `GET` | `/music/stream/{task_id}` | Proxy by task (409 if still GENERATING) |
+| `GET` | `/music/open?url=` · `/music/open/{task_id}` | Redirect to CDN (new tab) |
 | `GET` | `/music/usage/{user_id}` | Today's generation count vs plan limit |
-| `POST` | `/music/save` | Save finished song |
+| `POST` | `/music/save` | Save song + idempotent song XP in response |
 | `GET` | `/music/history/{user_id}` | All songs (+ grouped by region) |
 | `PATCH` | `/music/{song_id}` | Update title / `is_favorite` |
 | `DELETE` | `/music/{song_id}?user_id=` | Delete song |
-| `GET` | `/music/artist-styles?region=` | Artist personas for co-creation |
+| `GET` | `/music/artist-styles?region=&plan=&user_id=` | Artists + unlock flags / user XP |
+| `POST` | `/rewards/unlock-artist` | Spend 2,500 XP on eligible artist (positions 3–7 in list) |
 | `POST` | `/rewards/checkin` | Daily check-in XP |
 | `GET` | `/stripe/status/{user_id}` | Current subscription |
 | `POST` | `/stripe/checkout` | Start Stripe Checkout |
@@ -234,8 +270,8 @@ Interactive docs: `/docs` when the backend is running.
 
 | Table | What it stores |
 |---|---|
-| `profiles` | User info, `xp`, `plan`, Stripe IDs, **`api_key`** (Studio) |
-| `songs` | Tracks: audio, lyrics, mood, region, artist, title, **`is_favorite`**, **`license`** |
+| `profiles` | User info, `xp`, `plan`, Stripe IDs, **`api_key`**, **`unlocked_artists`** (JSON array) |
+| `songs` | Tracks: audio, lyrics, mood, region, artist, title, **`task_id`**, **`is_favorite`**, **`license`** |
 | `mood_sessions` | Co-creation sessions (used for daily gen counting) |
 | `mood_logs` | Mood detection history |
 | `user_rewards` | Streaks, badges, check-ins |
@@ -244,23 +280,24 @@ Interactive docs: `/docs` when the backend is running.
 
 ### Migrations
 
-Run once in the Supabase SQL editor:
+Run once in the Supabase SQL editor (scripts in `backend/migrations/`):
+
+| Script | Purpose |
+|---|---|
+| `add_song_favorites.sql` | `is_favorite` on `songs` |
+| `add_songs_task_id.sql` | `task_id` on `songs` (dedupe saves) |
+| `add_profiles_unlocked_artists.sql` | `unlocked_artists` jsonb on `profiles` |
+| `add_api_key.sql` | Studio `api_key` on `profiles` |
+| `create_study_surveys_full.sql` | Pre/post study surveys (admin export) |
 
 ```sql
--- Favourites
 ALTER TABLE songs ADD COLUMN IF NOT EXISTS is_favorite boolean DEFAULT false;
-
--- Studio API keys
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS api_key TEXT UNIQUE;
-CREATE INDEX IF NOT EXISTS idx_profiles_api_key ON profiles (api_key) WHERE api_key IS NOT NULL;
-
--- Optional: commercial license on songs
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS task_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_songs_task_id ON songs (task_id) WHERE task_id IS NOT NULL;
 ALTER TABLE songs ADD COLUMN IF NOT EXISTS license TEXT DEFAULT 'personal';
-
--- Pre/post UX study surveys (see backend/migrations/add_study_surveys.sql)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS unlocked_artists jsonb DEFAULT '[]'::jsonb;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS api_key TEXT UNIQUE;
 ```
-
-Files also live in `backend/migrations/` (`add_study_surveys.sql`, etc.).
 
 ---
 
@@ -361,6 +398,36 @@ Open `http://localhost:5173`. Hard-refresh after UI pulls (`Cmd+Shift+R`).
 
 Set `VITE_API_URL` on Vercel to your Render backend URL. Add the Vercel domain to backend CORS in `main.py` if needed.
 
+### Production deploy checklist
+
+Deploy **backend and frontend together** when changing playback or save behavior.
+
+1. **Supabase** — run `add_songs_task_id.sql` and `add_profiles_unlocked_artists.sql` if not applied.
+2. **Render** — redeploy backend (stream proxy, artist unlock, save XP).
+3. **Vercel** — redeploy frontend (`audioProxy.js`, `CoCreation.jsx`, `SongHistory.jsx`, CTAs).
+4. **Smoke test** — generate → no `409` on stream during GENERATING; history play/pause works; artist XP unlock on list positions 3–7 only.
+
+### Audio playback (CORS-safe proxy)
+
+Mobile Safari cannot play Sonauto CDN URLs directly from the app origin. The backend proxies allowlisted hosts (`cdn.sonauto.ai`, `sonauto.ai`, etc.).
+
+**Frontend URL order** (`frontend/src/utils/audioProxy.js`):
+
+1. When `audio_url` exists → `GET /music/stream?url=<normalized CDN URL>` (preferred).
+2. Only if no URL yet → `GET /music/stream/{task_id}` (409 while still GENERATING).
+
+On **SUCCESS**, the backend caches the normalized URL per task and only warns when the host is **not** allowlisted.
+
+### Render logs (what they mean)
+
+| Log / status | Meaning |
+|---|---|
+| `stream/{task_id}` **409** | Proxy called before Sonauto finished. |
+| `stream/{task_id}` **502** | Upstream/status fetch failed or audio not ready. |
+| `stream?url=…` **400** | Disallowed or non-normalized URL (older deploy). |
+| `Song saved (fallback columns)` | Missing `songs.task_id` — run `add_songs_task_id.sql`. |
+| `POST /rewards/xp` after save | Usually mood/check-in, not duplicate song XP. |
+
 ---
 
 ## Rewards (short)
@@ -369,8 +436,11 @@ Set `VITE_API_URL` on Vercel to your Render backend URL. Add the Vercel domain t
 |---|---|
 | Daily check-in | +10 |
 | Share a mood | +10 |
-| Co-create a song | +20 |
+| Co-create a song | +20 (once per save via `POST /music/save`, idempotent by `task_id`) |
 | Select a region (once) | +5 |
+| Unlock artist (positions 3–7 only) | −2,500 |
+
+Song-save XP is returned in the save response; badge checks use that total immediately. Artist unlock uses `POST /rewards/unlock-artist`.
 
 Ranks: Listener → Vibe Seeker → Composer → Artist → Maestro → Legend (see `RewardsScreen.jsx`).
 
@@ -386,7 +456,7 @@ One rotating challenge per day (5 in the pool). Bonus XP is awarded once per day
 | dc4 | Random Vibes | Complete mood flow using the **Quiz** tab |
 | dc5 | Double Down | Generate 2 songs in one day |
 
-Login popup: `DailyChallengeCTA` (dismissed for the day via localStorage). Progress shown on **Rewards** screen.
+Login popups (free): `UpgradePlanCTA` first, then `DailyChallengeCTA`. Progress on **Rewards** screen.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -402,6 +472,8 @@ Login popup: `DailyChallengeCTA` (dismissed for the day via localStorage). Progr
 - **Favourites:** Songs → 🤍 on a card, or filter with **Favourites** in the header row.
 - **Download:** Groove+ gets ⬇ on history cards and in the player; Free sees 🔒.
 - **Studio API:** upgrade to Studio → Plans → Generate API key → call `/api/v1/generate`.
+- **Playback:** history uses `stream?url=…` (200/206); pause stops audio (shared `historyAudio.js`).
+- **Artist XP:** on Free, only artists **3–7** in a region list show the 2,500 XP badge; artist **8+** shows upgrade only.
 
 Expiry: any future date · CVC: any 3 digits · ZIP: any 5 digits
 

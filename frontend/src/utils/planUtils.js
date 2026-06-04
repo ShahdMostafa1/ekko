@@ -29,13 +29,31 @@ export function isPaidPlan(plan) {
 /** Free plan: first N artists per region list; Groove/Studio: all. */
 export const FREE_ARTISTS_PER_REGION = 2
 
+/** XP cost for artists at list positions 3–7 (index 2–6), per region. */
+export const ARTIST_XP_UNLOCK_COST = 2500
+export const XP_ELIGIBLE_ARTISTS_PER_REGION = 5
+
+export function isXpEligibleArtistIndex(index) {
+  return (
+    index >= FREE_ARTISTS_PER_REGION
+    && index < FREE_ARTISTS_PER_REGION + XP_ELIGIBLE_ARTISTS_PER_REGION
+  )
+}
+
 export function canUseArtistStyles(plan) {
   return true
 }
 
-export function isArtistStyleUnlocked(artistIndex, plan) {
+export function isArtistStyleUnlocked(artistIndex, plan, unlockedArtistIds = []) {
   if (isPaidPlan(plan)) return true
-  return artistIndex < FREE_ARTISTS_PER_REGION
+  if (artistIndex < FREE_ARTISTS_PER_REGION) return true
+  return false
+}
+
+/** Prefer API `style.unlocked`; this is a fallback when flags are missing. */
+export function isArtistUnlockedFromApi(style, artistIndex, plan) {
+  if (style?.unlocked != null) return !!style.unlocked
+  return isArtistStyleUnlocked(artistIndex, plan)
 }
 
 export function canDownload(plan) {

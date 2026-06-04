@@ -18,7 +18,7 @@ const PLANS = [
     features: [
       "5 song generations / day",
       "Basic moods & regions",
-      "2 artist styles per region",
+      "2 free artists + next 5 in list via XP (2,500 each)",
       "Standard audio quality",
       "Last 10 songs in history",
     ],

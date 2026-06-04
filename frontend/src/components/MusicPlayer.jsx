@@ -27,6 +27,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const pollRef      = useRef(null);
   const pollStartRef = useRef(null);
   const retryRef     = useRef(0);
+  const saveStartedRef = useRef(false);
 
   const [audioUrl, setAudioUrl]         = useState(params?.audio_url || null);
   const [taskId]                        = useState(params?.task_id || null);
@@ -147,16 +148,17 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     };
   }, [taskId, audioUrl, pollInterval, isPriority, t]);
 
-  // ── Save song once audio URL is ready ─────────────────────
+  // ── Save song once audio URL is ready (one save + one reward per generation) ──
   useEffect(() => {
-    if (!audioUrl || savedOk || !params?.user_id || params?.mock) return;
-    const stableKey = params?.task_id || params?.audio_url;
+    if (!audioUrl || savedOk || saveStartedRef.current || !params?.user_id || params?.mock) return;
+    saveStartedRef.current = true;
     const body = {
       user_id: params.user_id, region: params.region || "",
       region_label: params.region_label || "", mood_label: params.mood_label || "",
       emotion: params.emotion || "neutral", valence: params.valence ?? 0.5,
       energy: params.energy ?? 0.5, lyrics: params.lyrics || "",
       audio_url: audioUrl, prompt_used: params.prompt_used || "",
+      task_id: params.task_id || taskId || "",
       language: params.language || "English", language_code: params.language_code || "",
       artist_style_id: params.artist_style_id || "", artist_label: params.artist_label || "",
       title: params.title || "",
@@ -165,9 +167,28 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     })
       .then(r => r.json())
-      .then(d => { if (d.saved) { setSavedOk(true); onSaved?.(stableKey); } })
-      .catch(e => console.error("[save] error:", e));
-  }, [audioUrl, savedOk]); // eslint-disable-line react-hooks/exhaustive-deps
+      .then(d => {
+        if (!d.saved) {
+          saveStartedRef.current = false;
+          return;
+        }
+        setSavedOk(true);
+        const songId = d.song?.id;
+        onSaved?.({
+          songId,
+          duplicate: !!d.duplicate,
+          xp: {
+            awarded: d.awarded,
+            xp_awarded: d.xp_awarded,
+            total_xp: d.total_xp,
+          },
+        });
+      })
+      .catch(e => {
+        console.error("[save] error:", e);
+        saveStartedRef.current = false;
+      });
+  }, [audioUrl, savedOk, taskId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Audio event handlers ───────────────────────────────────
   const onCanPlay        = () => setAudioLoading(false);
