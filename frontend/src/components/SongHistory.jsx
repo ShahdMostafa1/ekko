@@ -37,7 +37,6 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   const [activeSongId, setActiveSongId] = useState(null)
   const [isPlaying, setIsPlaying]       = useState(false)
   const [playProgress, setPlayProgress] = useState({})
-  const [playLoadingId, setPlayLoadingId] = useState(null)
   const [editingId, setEditingId]     = useState(null)
   const [editTitle, setEditTitle]     = useState('')
   const [actionLoading, setActionLoading] = useState(null)
@@ -45,7 +44,6 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   const audioRef                = useRef(null)
   const activeSongRef           = useRef(null)
   const rafRef                  = useRef(null)
-  const playBusyRef             = useRef(false)
   const playGenRef              = useRef(0)
   const activeSourceRef         = useRef(null)
 
@@ -129,13 +127,11 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       el.removeAttribute('src')
       el.load()
     }
-    playBusyRef.current = false
     activeSongRef.current = null
     revokeBlobAudioUrl()
     activeSourceRef.current = null
     setActiveSongId(null)
     setIsPlaying(false)
-    setPlayLoadingId(null)
     if (songId != null) {
       setPlayProgress(prev => ({ ...prev, [String(songId)]: 0 }))
     }
@@ -153,56 +149,10 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     rafRef.current = requestAnimationFrame(tick)
   }
 
-  const pauseActiveSong = (el) => {
-    bumpPlayGen()
-    if (el) {
-      try {
-        el.pause()
-        el.removeAttribute('src')
-        el.load()
-      } catch { /* ignore */ }
-    }
-    playBusyRef.current = false
-    setPlayLoadingId(null)
-    stopProgress()
-    setIsPlaying(false)
-  }
+  const togglePlay = async (song, e) => {
+    e?.stopPropagation()
+    e?.preventDefault()
 
-  const tryPlaySource = async (el, url, gen) => {
-    if (playGenRef.current !== gen) return false
-    applyAudioSource(el, url)
-    await waitUntilCanPlay(el, 18000)
-    if (playGenRef.current !== gen) return false
-    const ok = await playFromUserGesture(el)
-    if (playGenRef.current !== gen) {
-      try {
-        el.pause()
-        el.removeAttribute('src')
-        el.load()
-      } catch { /* ignore */ }
-      return false
-    }
-    if (ok) activeSourceRef.current = url
-    return ok
-  }
-
-  const handlePlayButton = (e, song) => {
-    e.stopPropagation()
-    e.preventDefault()
-    const el = audioRef.current || getHistoryAudio()
-    audioRef.current = el
-    if (!el) return
-    const songId = String(song.id)
-    const isActive =
-      String(activeSongRef.current) === songId || String(activeSongId) === songId
-    if (isActive && (isPlaying || playBusyRef.current || !el.paused)) {
-      pauseActiveSong(el)
-      return
-    }
-    togglePlay(song)
-  }
-
-  const togglePlay = async (song) => {
     const songId = String(song.id)
     const el = audioRef.current || getHistoryAudio()
     audioRef.current = el
@@ -214,75 +164,64 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       return
     }
 
-    const isThisActive =
-      String(activeSongRef.current) === songId || String(activeSongId) === songId
+    const isActive = String(activeSongId) === songId
 
-    // Pause: use element state; also stop in-flight play() / load (playGen bump in pauseActiveSong)
-    if (isThisActive && (!el.paused || isPlaying || playBusyRef.current)) {
-      pauseActiveSong(el)
+    if (isActive && !el.paused) {
+      bumpPlayGen()
+      try { el.pause() } catch { /* ignore */ }
       return
     }
 
-    if (isThisActive && el.paused) {
-      const gen = ++playGenRef.current
-      playBusyRef.current = true
-      setPlayLoadingId(songId)
+    if (isActive && el.paused && activeSourceRef.current) {
       try {
-        const src = activeSourceRef.current
-        if (src) applyAudioSource(el, src)
         const ok = await playFromUserGesture(el)
-        if (playGenRef.current !== gen) return
-        if (ok) setIsPlaying(true)
-        else setActionError('Playback failed. Try opening the song in a new tab.')
+        if (!ok) setActionError('Playback failed. Try opening the song in a new tab.')
       } catch {
-        if (playGenRef.current === gen) {
-          setActionError('Playback failed. Try opening the song in a new tab.')
-        }
-      } finally {
-        if (playGenRef.current === gen) {
-          playBusyRef.current = false
-          setPlayLoadingId(null)
-        }
+        setActionError('Playback failed. Try opening the song in a new tab.')
       }
       return
     }
 
-    if (activeSongRef.current) clearActivePlayback(activeSongRef.current)
+    bumpPlayGen()
+    const gen = playGenRef.current
 
-    const gen = ++playGenRef.current
-    playBusyRef.current = true
-    setPlayLoadingId(songId)
+    if (activeSongId && String(activeSongId) !== songId) {
+      clearActivePlayback(activeSongId)
+    }
+
     setActionError('')
     activeSongRef.current = songId
     setActiveSongId(songId)
     setPlayProgress(prev => ({ ...prev, [songId]: 0 }))
-    setIsPlaying(false)
+
+    const startPlayback = async (url) => {
+      if (playGenRef.current !== gen) return false
+      applyAudioSource(el, url)
+      await waitUntilCanPlay(el, 15000)
+      if (playGenRef.current !== gen) return false
+      const ok = await playFromUserGesture(el)
+      if (playGenRef.current !== gen) {
+        try { el.pause() } catch { /* ignore */ }
+        return false
+      }
+      if (ok) activeSourceRef.current = url
+      return ok
+    }
 
     try {
       for (const url of sources) {
-        if (playGenRef.current !== gen) return
-        try {
-          if (await tryPlaySource(el, url, gen)) {
-            setIsPlaying(true)
-            return
-          }
-        } catch { /* try next */ }
+        if (await startPlayback(url)) return
       }
-      if (playGenRef.current !== gen) return
       const blobTarget = sources.find((u) => u.includes('/music/stream')) || sources[0]
       const blobUrl = await fetchBlobAudioUrl(blobTarget)
       if (playGenRef.current !== gen) return
-      if (blobUrl && (await tryPlaySource(el, blobUrl, gen))) {
-        setIsPlaying(true)
-        return
-      }
+      if (blobUrl && (await startPlayback(blobUrl))) return
       if (playGenRef.current !== gen) return
       clearActivePlayback(songId)
       setActionError('Could not play this song. Use the link below to open it in a new tab.')
-    } finally {
+    } catch {
       if (playGenRef.current === gen) {
-        playBusyRef.current = false
-        setPlayLoadingId(null)
+        setActionError('Could not play this song. Use the link below to open it in a new tab.')
       }
     }
   }
@@ -414,8 +353,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
     const meta    = REGION_META[song.region] || REGION_META.global
     const isOpen  = expanded === song.id
     const isActive = String(activeSongId) === String(song.id)
-    const isLoading = playLoadingId === String(song.id)
-    const isPlay   = isActive && isPlaying && !isLoading
+    const isPlay   = isActive && isPlaying
     const isBusy   = actionLoading === song.id
     const prog     = playProgress[String(song.id)] || 0
     const dateStr = new Date(song.created_at).toLocaleDateString(undefined, {
@@ -496,12 +434,11 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
                 )}
                 <button
                   type="button"
-                  className={`sh-play ${isPlay ? 'playing' : ''} ${isLoading ? 'loading' : ''}`}
-                  onClick={e => handlePlayButton(e, song)}
-                  disabled={isLoading && !isActive}
-                  aria-label={isLoading ? 'Loading' : isPlay ? 'Pause' : 'Play'}
+                  className={`sh-play ${isPlay ? 'playing' : ''}`}
+                  onClick={e => togglePlay(song, e)}
+                  aria-label={isPlay ? 'Pause' : 'Play'}
                 >
-                  {isLoading ? '⏳' : isPlay ? '⏸' : '▶'}
+                  {isPlay ? '⏸' : '▶'}
                 </button>
               </>
             )}
@@ -851,7 +788,6 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-lang    { color: #7c5ce7; font-weight: 600; }
         .sh-mood-sub{ color: #6b5f8a; font-style: italic; }
         .sh-right   { display: flex; align-items: center; gap: 10px; }
-        .sh-play.loading { opacity: 0.85; cursor: wait; }
         .sh-play {
           width: 38px; height: 38px; border-radius: 50%;
           border: 1.5px solid var(--rc);
