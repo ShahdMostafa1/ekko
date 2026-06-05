@@ -57,7 +57,16 @@ const SongCard = memo(function SongCard({
     <div className={`sh-card ${song.is_favorite ? 'fav' : ''}`} style={{ '--rc': meta.color }}>
       <div className="sh-card-top" onClick={onToggleExpand}>
         <div className="sh-left">
-          <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
+          {song.cover_url ? (
+            <img
+              src={song.cover_url}
+              alt=""
+              className="sh-cover-thumb"
+              style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }}
+            />
+          ) : (
+            <span className="sh-emotion">{EMOTION_EMOJI[song.emotion] || '🎵'}</span>
+          )}
           <div className="sh-info">
             {editingId === song.id ? (
               <div className="sh-edit-row" onClick={e => e.stopPropagation()}>
@@ -552,7 +561,9 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           (s.title       || '').toLowerCase().includes(q) ||
           (s.mood_label  || '').toLowerCase().includes(q) ||
           (s.emotion     || '').toLowerCase().includes(q) ||
-          (s.lyrics      || '').toLowerCase().includes(q)
+          (s.lyrics      || '').toLowerCase().includes(q) ||
+          (s.memory_location || '').toLowerCase().includes(q) ||
+          (s.memory_note || '').toLowerCase().includes(q)
         )
       })
     : base
@@ -696,24 +707,24 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
       <style>{`
         .sh-root {
           font-family: 'DM Sans','Segoe UI',sans-serif;
-          max-width: 480px; margin: 0 auto; padding-bottom: 40px;
+          width: 100%; max-width: none; margin: 0; padding-bottom: 40px;
         }
         .sh-header { margin-bottom: 14px; }
         .sh-plan-banner {
           margin-bottom: 12px; padding: 10px 14px; border-radius: 10px;
           background: rgba(124, 92, 231, 0.12); border: 1px solid rgba(124, 92, 231, 0.25);
-          font-size: 13px; color: rgba(255,255,255,0.75); line-height: 1.45;
+          font-size: 18px; color: rgba(255,255,255,0.75); line-height: 1.45;
         }
         .sh-upgrade-link {
           background: none; border: none; padding: 0; color: #a78bfa;
           font-weight: 600; cursor: pointer; text-decoration: underline;
         }
-        .sh-headline { font-size: 24px; font-weight: 700; color: #fff; margin: 0 0 6px; text-align: center; }
+        .sh-headline { font-size: 29px; font-weight: 700; color: #fff; margin: 0 0 6px; text-align: center; }
         .sh-headline em { font-style: italic; color: #b09ee0; }
         .sh-sub-row {
           display: flex; align-items: center; justify-content: space-between; gap: 8px;
         }
-        .sh-sub { font-size: 13px; color: #8b7eb8; margin: 0; }
+        .sh-sub { font-size: 18px; color: #8b7eb8; margin: 0; }
 
         /* ── Favourites (same width as sort) ── */
         .sh-fav-filter {
@@ -723,7 +734,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           border-radius: 12px;
           border: 1.5px solid rgba(176,158,224,.15);
           background: rgba(255,255,255,.06);
-          color: #b09ee0; font-size: 12px; font-weight: 600;
+          color: #b09ee0; font-size: 17px; font-weight: 600;
           cursor: pointer; font-family: inherit;
           white-space: nowrap;
           transition: border-color .18s, background .18s, color .18s, box-shadow .18s;
@@ -739,7 +750,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           color: #fecaca;
           box-shadow: 0 0 16px rgba(239,68,68,.15);
         }
-        .sh-fav-filter-icon { font-size: 13px; line-height: 1; flex-shrink: 0; }
+        .sh-fav-filter-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
 
         /* ── Search + sort row ── */
         .sh-search-row {
@@ -749,7 +760,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           flex: 1; position: relative; display: flex; align-items: center; min-width: 0;
         }
         .sh-search-icon {
-          position: absolute; left: 12px; font-size: 14px; pointer-events: none; opacity: .6;
+          position: absolute; left: 12px; font-size: 19px; pointer-events: none; opacity: .6;
         }
         .sh-search {
           width: 100%; box-sizing: border-box;
@@ -757,7 +768,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           background: rgba(255,255,255,.06);
           border: 1.5px solid rgba(176,158,224,.15);
           border-radius: 12px; color: #e0d8ff;
-          font-size: 13px; font-family: inherit;
+          font-size: 18px; font-family: inherit;
           outline: none; transition: border-color .18s;
         }
         .sh-search::placeholder { color: #6b5f8a; }
@@ -765,7 +776,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-search-clear {
           position: absolute; right: 10px;
           background: transparent; border: none;
-          color: #6b5f8a; font-size: 13px; cursor: pointer; padding: 2px 4px;
+          color: #6b5f8a; font-size: 18px; cursor: pointer; padding: 2px 4px;
         }
         .sh-sort {
           flex-shrink: 0; width: 128px; box-sizing: border-box;
@@ -773,7 +784,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           background: rgba(255,255,255,.06);
           border: 1.5px solid rgba(176,158,224,.15);
           border-radius: 12px; color: #b09ee0;
-          font-size: 12px; font-family: inherit;
+          font-size: 17px; font-family: inherit;
           cursor: pointer; outline: none;
           appearance: none; -webkit-appearance: none;
           white-space: nowrap;
@@ -784,7 +795,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-pill {
           padding: 6px 14px; border: 1.5px solid rgba(176,158,224,.2);
           border-radius: 20px; background: transparent;
-          color: #b09ee0; font-size: 12px; font-weight: 600;
+          color: #b09ee0; font-size: 17px; font-weight: 600;
           cursor: pointer; transition: all .18s;
         }
         .sh-pill.active {
@@ -813,10 +824,10 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-action-error {
           margin: 0 0 12px; padding: 10px 12px; border-radius: 10px;
           background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.25);
-          color: #fca5a5; font-size: 12px; text-align: center;
+          color: #fca5a5; font-size: 17px; text-align: center;
         }
         .sh-fav-btn {
-          font-size: 16px; line-height: 1;
+          font-size: 21px; line-height: 1;
         }
         .sh-fav-btn.on {
           border-color: rgba(239,68,68,.55);
@@ -829,19 +840,19 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         }
         .sh-action-btn {
           background: rgba(255,255,255,.06); border: 1px solid rgba(176,158,224,.15);
-          border-radius: 8px; color: #8b7eb8; font-size: 12px;
+          border-radius: 8px; color: #8b7eb8; font-size: 17px;
           width: 28px; height: 28px; cursor: pointer; display: flex;
           align-items: center; justify-content: center; transition: all .15s;
         }
         .sh-action-btn:hover { background: rgba(255,255,255,.1); color: #e0d8ff; }
         .sh-action-btn.save { color: #34d399; border-color: rgba(52,211,153,.3); }
         .sh-action-btn.danger:hover { color: #f87171; border-color: rgba(248,113,113,.3); }
-        .sh-dl-btn { font-size: 13px; text-decoration: none; color: inherit; }
+        .sh-dl-btn { font-size: 18px; text-decoration: none; color: inherit; }
         .sh-dl-btn.locked { opacity: 0.7; cursor: pointer; }
         .sh-dl-row { margin-top: 4px; }
         .sh-dl-link {
           display: inline-flex; align-items: center; gap: 6px;
-          font-size: 12px; font-weight: 600; color: #a78bfa; text-decoration: none;
+          font-size: 17px; font-weight: 600; color: #a78bfa; text-decoration: none;
           background: rgba(124, 92, 231, 0.12); border: 1px solid rgba(124, 92, 231, 0.25);
           border-radius: 8px; padding: 6px 12px; cursor: pointer;
         }
@@ -854,13 +865,13 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-edit-input {
           flex: 1; min-width: 0; padding: 4px 8px; border-radius: 8px;
           background: rgba(255,255,255,.08); border: 1px solid rgba(124,92,231,.4);
-          color: #e0d8ff; font-size: 13px; font-family: inherit; outline: none;
+          color: #e0d8ff; font-size: 18px; font-family: inherit; outline: none;
         }
         .sh-left  { display: flex; align-items: center; gap: 8px; }
-        .sh-emotion { font-size: 26px; line-height: 1; }
-        .sh-mood { font-size: 14px; font-weight: 700; color: #e0d8ff; margin: 0 0 3px; }
+        .sh-emotion { font-size: 31px; line-height: 1; }
+        .sh-mood { font-size: 19px; font-weight: 700; color: #e0d8ff; margin: 0 0 3px; }
         .sh-meta {
-          font-size: 11px; color: #8b7eb8; margin: 0;
+          font-size: 16px; color: #8b7eb8; margin: 0;
           display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
         }
         .sh-region  { color: var(--rc); font-weight: 600; }
@@ -872,13 +883,13 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           width: 38px; height: 38px; border-radius: 50%;
           border: 1.5px solid var(--rc);
           background: color-mix(in srgb, var(--rc) 12%, transparent);
-          color: var(--rc); font-size: 13px; cursor: pointer;
+          color: var(--rc); font-size: 18px; cursor: pointer;
           display: flex; align-items: center; justify-content: center;
           transition: all .18s;
         }
         .sh-play:hover { background: color-mix(in srgb, var(--rc) 28%, transparent); transform: scale(1.08); }
         .sh-play.playing { background: var(--rc); color: #fff; }
-        .sh-chevron { font-size: 10px; color: #6b5f8a; }
+        .sh-chevron { font-size: 15px; color: #6b5f8a; }
 
         /* ── Progress bar when playing ── */
         .sh-play-progress-wrap {
@@ -900,12 +911,12 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           to   { opacity: 1; transform: translateY(0); }
         }
         .sh-section-label {
-          font-size: 10px; font-weight: 700; color: #6b5f8a;
+          font-size: 15px; font-weight: 700; color: #6b5f8a;
           text-transform: uppercase; letter-spacing: .06em;
           margin: 12px 0 6px;
         }
         .sh-lyrics {
-          font-family: inherit; font-size: 13px; line-height: 1.9;
+          font-family: inherit; font-size: 18px; line-height: 1.9;
           color: #c4b5f0; white-space: pre-wrap; margin: 0;
           /* ── TALLER ── */
           max-height: 280px; overflow-y: auto; padding-right: 6px;
@@ -914,23 +925,23 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         .sh-lyrics::-webkit-scrollbar-thumb { background: rgba(176,158,224,.25); border-radius: 2px; }
         .sh-bars { display: flex; flex-direction: column; gap: 8px; }
         .sh-bar-row { display: flex; align-items: center; gap: 8px; }
-        .sh-bar-label { font-size: 11px; color: #8b7eb8; font-weight: 600; width: 52px; }
+        .sh-bar-label { font-size: 16px; color: #8b7eb8; font-weight: 600; width: 52px; }
         .sh-bar-bg { flex: 1; height: 5px; background: rgba(255,255,255,.07); border-radius: 3px; overflow: hidden; }
         .sh-bar-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
-        .sh-bar-val { font-size: 11px; color: #6b5f8a; font-weight: 600; width: 32px; text-align: right; }
+        .sh-bar-val { font-size: 16px; color: #6b5f8a; font-weight: 600; width: 32px; text-align: right; }
         .sh-reasoning {
-          font-size: 12px; color: #8b7eb8; font-style: italic;
+          font-size: 17px; color: #8b7eb8; font-style: italic;
           background: rgba(124,92,231,.06); border-radius: 10px;
           padding: 8px 12px; margin: 0; line-height: 1.6;
         }
         .sh-artist {
-          font-size: 12px; color: #a78bfa; font-weight: 600;
+          font-size: 17px; color: #a78bfa; font-weight: 600;
           background: rgba(124,92,231,.08); border-radius: 10px;
           padding: 6px 12px; margin: 0;
         }
         .sh-loading {
           display: flex; flex-direction: column; align-items: center;
-          gap: 12px; padding: 48px 0; color: #8b7eb8; font-size: 14px;
+          gap: 12px; padding: 48px 0; color: #8b7eb8; font-size: 19px;
         }
         .sh-spinner {
           width: 28px; height: 28px;
@@ -940,13 +951,13 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         }
         @keyframes shSpin { to { transform: rotate(360deg); } }
         .sh-empty { text-align: center; padding: 52px 20px; }
-        .sh-empty-icon  { font-size: 44px; margin: 0 0 14px; }
-        .sh-empty-title { font-size: 17px; font-weight: 600; color: #c4b5f0; margin: 0 0 6px; }
-        .sh-empty-sub   { font-size: 13px; color: #8b7eb8; margin: 0; }
+        .sh-empty-icon  { font-size: 49px; margin: 0 0 14px; }
+        .sh-empty-title { font-size: 22px; font-weight: 600; color: #c4b5f0; margin: 0 0 6px; }
+        .sh-empty-sub   { font-size: 18px; color: #8b7eb8; margin: 0; }
 
         @media (max-width: 520px) {
           .sh-root { max-width: 100%; }
-          .sh-headline { font-size: 20px; }
+          .sh-headline { font-size: 25px; }
           .sh-sub-row { flex-wrap: wrap; gap: 10px; }
           .sh-fav-filter { width: auto; flex: 1; min-width: 0; }
           .sh-search-row { flex-wrap: wrap; }

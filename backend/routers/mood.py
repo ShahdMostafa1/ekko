@@ -426,6 +426,24 @@ def _mood_from_transcript(
     feats:         dict,
 ) -> dict:
     """Mood detection from text only — avoids paid OpenRouter audio."""
+    from egyptian_mood import match_egyptian_slang
+
+    slang = match_egyptian_slang(transcript)
+    if slang:
+        detected_lang = _resolve_language(transcript, stt_result, language_hint)
+        ac_arousal = min(feats.get("energy", 0.005) * 20, 1.0)
+        return {
+            "transcript":   transcript,
+            "language":     detected_lang,
+            "top_emotion":  slang["top_emotion"],
+            "confidence":   slang["confidence"],
+            "valence":      normalise(slang["valence"]),
+            "arousal":      round(0.5 * slang["arousal"] + 0.5 * ac_arousal, 3),
+            "reasoning":    slang["reasoning"],
+            "method":       f"egyptian_slang_{stt_source}",
+            "all_emotions": slang["all_emotions"],
+        }
+
     detected_lang = _resolve_language(transcript, stt_result, language_hint)
     ac_arousal    = min(feats.get("energy", 0.005) * 20, 1.0)
 
@@ -532,6 +550,7 @@ USER REGION: {region or 'unknown'}
 ARABIC CULTURAL NOTES — READ CAREFULLY:
 - "تعبان / تعبانة / تعبت" = emotionally drained, exhausted, burnt out → sadness
 - "مش قادر / مش قادرة" = can't cope, overwhelmed, helpless → fear or sadness
+- "طفشان / طفشانه / تفشانه" = bored, restless, fed up (NOT sadness/failure) → disgust
 - "زهقت / زهقان / زهقانة" = fed up, done with everything → disgust or sadness
 - "محبط / محبطة / باحباط" = frustrated, deeply disappointed → sadness or anger
 - "الدنيا مقفلة / كل حاجة مقفلة" = world feels closed/locked = deep despair → sadness
@@ -648,6 +667,7 @@ USER REGION: {region or 'unknown'}
 ARABIC CULTURAL NOTES — READ CAREFULLY:
 - "تعبان / تعبانة / تعبت" = emotionally drained, exhausted → sadness
 - "مش قادر / مش قادرة" = can't cope, overwhelmed → fear or sadness
+- "طفشان / طفشانه / تفشانه" = bored, restless, fed up (NOT sadness/failure) → disgust
 - "زهقت / زهقان / زهقانة" = fed up, done with everything → disgust or sadness
 - "محبط / محبطة / باحباط" = frustrated, deeply disappointed → sadness or anger
 - "الدنيا مقفلة / كل حاجة مقفلة" = world feels closed = deep despair → sadness
@@ -822,7 +842,7 @@ def _heuristic_text_emotion(text: str) -> dict:
         (("angry", "mad", "furious", "stress", "hate", "غضب", "زعل"), "anger"),
         (("scared", "afraid", "anxious", "worry", "panic", "fear", "خوف"), "fear"),
         (("surprise", "shock", "wow"), "surprise"),
-        (("disgust", "gross", "resist"), "disgust"),
+        (("disgust", "gross", "resist", "طفشان", "طفشانه", "تفشان", "تفشانه", "زهقت", "زهقان"), "disgust"),
     ]
     for words, emo in rules:
         if any(w in t for w in words):
@@ -1185,6 +1205,27 @@ async def detect_mood_text(req: TextMoodRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
     print(f"[mood] text input: {req.text}")
+
+    from egyptian_mood import match_egyptian_slang
+
+    slang = match_egyptian_slang(req.text)
+    if slang:
+        valence = normalise(slang["valence"])
+        _persist_mood_log(
+            req.user_id, valence, slang["arousal"], slang["top_emotion"],
+            req.text, slang["confidence"], {}, req.region, "text", slang["reasoning"],
+        )
+        return {
+            "transcript":   req.text,
+            "language":     "text",
+            "top_emotion":  slang["top_emotion"],
+            "confidence":   slang["confidence"],
+            "valence":      valence,
+            "arousal":      slang["arousal"],
+            "reasoning":    slang["reasoning"],
+            "method":       "egyptian_slang",
+            "all_emotions": slang["all_emotions"],
+        }
 
     agent_result = _gemini_text_agent(
         text   = req.text,

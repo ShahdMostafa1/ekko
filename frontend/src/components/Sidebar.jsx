@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/I18nContext.jsx'
 const NAV_ITEMS = [
   { id: 'mood',    icon: '🎙', labelKey: 'nav.create'   },
   { id: 'history', icon: '🎵', labelKey: 'nav.songs'    },
+  { id: 'journey', icon: '📈', labelKey: 'nav.journey'  },
   { id: 'rewards', icon: '🏅', labelKey: 'nav.rewards'  },
   { id: 'survey',  icon: '📋', labelKey: 'nav.study'    },
   { id: 'plans',   icon: '✨', labelKey: 'nav.plans'    },
@@ -88,7 +89,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
           flexShrink:     0,
         }}>
           <span style={{
-            fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 20,
+            fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 25,
             background: 'linear-gradient(135deg, #a78bfa, #60a5fa)',
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
           }}>Ekko</span>
@@ -96,7 +97,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
             onClick={onClose}
             style={{
               background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)',
-              borderRadius: 8, color: '#8b7eb8', fontSize: 16,
+              borderRadius: 8, color: '#8b7eb8', fontSize: 21,
               width: 32, height: 32, cursor: 'pointer', display: 'flex',
               alignItems: 'center', justifyContent: 'center', flexShrink: 0,
             }}
@@ -112,14 +113,14 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
           flexShrink: 0,
         }}>
           <p style={{
-            margin: '0 0 2px', fontSize: 12, color: '#7c5ce7',
+            margin: '0 0 2px', fontSize: 17, color: '#7c5ce7',
             fontWeight: 700, letterSpacing: '.06em',
             fontFamily: "'Syne', sans-serif", textTransform: 'uppercase',
           }}>
             {t('nav.hello')}
           </p>
           <p style={{
-            margin: '0 0 10px', fontSize: 19, fontWeight: 800,
+            margin: '0 0 10px', fontSize: 24, fontWeight: 800,
             color: '#e0d8ff', fontFamily: "'Syne', sans-serif", lineHeight: 1.2,
             wordBreak: 'break-word',
           }}>
@@ -130,14 +131,14 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
             <div style={{
               background: 'rgba(124,92,231,.2)', border: '1px solid rgba(124,92,231,.35)',
               borderRadius: 20, padding: '3px 10px',
-              fontSize: 12, fontWeight: 700, color: '#a78bfa',
+              fontSize: 17, fontWeight: 700, color: '#a78bfa',
             }}>
               ⚡ {xp ?? 0} XP
             </div>
             <div style={{
               background: 'rgba(52,211,153,.1)', border: '1px solid rgba(52,211,153,.3)',
               borderRadius: 20, padding: '3px 10px',
-              fontSize: 12, fontWeight: 700, color: '#34d399',
+              fontSize: 17, fontWeight: 700, color: '#34d399',
             }}>
               {planLabel}
             </div>
@@ -145,7 +146,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
 
           {userEmail && (
             <p style={{
-              margin: '8px 0 0', fontSize: 11, color: '#4b4570',
+              margin: '8px 0 0', fontSize: 16, color: '#4b4570',
               wordBreak: 'break-all', lineHeight: 1.4,
             }}>
               {userEmail}
@@ -156,7 +157,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
         {/* Nav items */}
         <nav style={{ padding: '12px 10px', flex: 1 }}>
           <p style={{
-            margin: '0 0 8px 8px', fontSize: 10, fontWeight: 700,
+            margin: '0 0 8px 8px', fontSize: 15, fontWeight: 700,
             color: '#4b4570', textTransform: 'uppercase', letterSpacing: '.1em',
             fontFamily: "'Syne', sans-serif",
           }}>
@@ -199,11 +200,11 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
                   }
                 }}
               >
-                <span style={{ fontSize: 19, width: 26, textAlign: 'center', flexShrink: 0 }}>
+                <span style={{ fontSize: 24, width: 26, textAlign: 'center', flexShrink: 0 }}>
                   {item.icon}
                 </span>
                 <span style={{
-                  fontSize: 14, fontWeight: isActive ? 700 : 500,
+                  fontSize: 19, fontWeight: isActive ? 700 : 500,
                   color: isActive ? '#e0d8ff' : '#8b7eb8',
                   transition: 'color .18s',
                 }}>
@@ -223,7 +224,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
         {/* Language + sign out */}
         <div style={{ padding: '10px 10px 24px', borderTop: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
           <p style={{
-            margin: '0 0 8px 8px', fontSize: 10, fontWeight: 700,
+            margin: '0 0 8px 8px', fontSize: 15, fontWeight: 700,
             color: '#4b4570', textTransform: 'uppercase', letterSpacing: '.1em',
             fontFamily: "'Syne', sans-serif",
           }}>
@@ -237,7 +238,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
                 onClick={(e) => { e.stopPropagation(); setLocale(code) }}
                 style={{
                   flex: 1, padding: '9px 10px', borderRadius: 10, cursor: 'pointer',
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700,
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 18, fontWeight: 700,
                   background: locale === code
                     ? 'linear-gradient(135deg, rgba(124,92,231,.35), rgba(168,85,247,.2))'
                     : 'rgba(255,255,255,.04)',
@@ -259,7 +260,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
               background: 'transparent',
               border: '1px solid rgba(248,113,113,.2)',
               borderRadius: 12, cursor: 'pointer',
-              color: '#f87171', fontSize: 14, fontWeight: 600,
+              color: '#f87171', fontSize: 19, fontWeight: 600,
               fontFamily: "'DM Sans', sans-serif",
               transition: 'all .18s',
             }}
@@ -272,7 +273,7 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
               e.currentTarget.style.borderColor = 'rgba(248,113,113,.2)'
             }}
           >
-            <span style={{ fontSize: 18 }}>👋</span>
+            <span style={{ fontSize: 23 }}>👋</span>
             {t('nav.signOut')}
           </button>
         </div>

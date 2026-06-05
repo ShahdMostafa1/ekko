@@ -132,6 +132,7 @@ export default function CoCreation({
     tempo < 110 ? 'Moderate'  :
     tempo < 130 ? 'Upbeat'    : 'Fast'
   )
+  const tempoFillPct = `${((tempo - 40) / (180 - 40)) * 100}%`
 
   const paidPlan = isPaidPlan(userPlan)
 
@@ -299,6 +300,7 @@ export default function CoCreation({
             type="range" min={40} max={180} value={tempo}
             onChange={e => setTempo(Number(e.target.value))}
             className="cc-slider"
+            style={{ '--val': tempoFillPct }}
           />
           <div className="cc-slider-ticks">
             {['40', '80', '120', '180'].map(t => <span key={t}>{t}</span>)}
@@ -435,21 +437,21 @@ export default function CoCreation({
           background: rgba(124,92,231,.15);
           box-shadow: 0 0 0 1px #7c5ce7;
         }
-        .cao-emoji { font-size: 18px; line-height: 1; }
+        .cao-emoji { font-size: 23px; line-height: 1; }
         .cao-label {
-          font-size: 12px; font-weight: 700;
+          font-size: 17px; font-weight: 700;
           color: #e0d8ff; line-height: 1.2;
         }
         .cao-desc {
-          font-size: 10px; color: #8b7eb8;
+          font-size: 15px; color: #8b7eb8;
           line-height: 1.3; margin-top: 1px;
         }
         .cc-artist-loading {
-          font-size: 13px; color: #8b7eb8;
+          font-size: 18px; color: #8b7eb8;
           padding: 12px 0; text-align: center;
         }
         .cc-lock-note {
-          font-size: 12px; color: #8b7eb8; margin: 0 0 8px;
+          font-size: 17px; color: #8b7eb8; margin: 0 0 8px;
         }
         .cc-upgrade-link {
           background: none; border: none; padding: 0; color: #a78bfa;
@@ -472,12 +474,12 @@ export default function CoCreation({
           border-radius: 18px; padding: 22px 20px;
           box-shadow: 0 20px 50px rgba(0,0,0,0.45);
         }
-        .cc-unlock-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #e9d5ff; }
-        .cc-unlock-body { margin: 0 0 16px; font-size: 14px; line-height: 1.55; color: #b09ee0; }
-        .cc-unlock-err { margin: 0 0 10px; font-size: 12px; color: #fca5a5; }
+        .cc-unlock-title { margin: 0 0 10px; font-size: 23px; font-weight: 700; color: #e9d5ff; }
+        .cc-unlock-body { margin: 0 0 16px; font-size: 19px; line-height: 1.55; color: #b09ee0; }
+        .cc-unlock-err { margin: 0 0 10px; font-size: 17px; color: #fca5a5; }
         .cc-unlock-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
         .cc-unlock-primary, .cc-unlock-secondary {
-          border-radius: 12px; padding: 10px 16px; font-size: 13px; font-weight: 700;
+          border-radius: 12px; padding: 10px 16px; font-size: 18px; font-weight: 700;
           cursor: pointer; font-family: inherit; border: none;
         }
         .cc-unlock-primary {

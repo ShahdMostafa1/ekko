@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 import os
+import httpx
 from supabase import create_client, Client
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -29,6 +30,83 @@ class XPUpdate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     region: str | None = None
+
+class SignInMethodsRequest(BaseModel):
+    email: EmailStr
+
+OAUTH_PROVIDERS = frozenset({"google", "apple", "github", "facebook", "azure", "twitter"})
+
+def _providers_from_user(user: dict) -> list[str]:
+    """Return sign-in methods for a Supabase auth user (e.g. email, google)."""
+    providers: set[str] = set()
+    for ident in user.get("identities") or []:
+        p = (ident.get("provider") or "").lower()
+        if p:
+            providers.add(p)
+    if user.get("encrypted_password"):
+        providers.add("email")
+    return sorted(providers)
+
+# ── Sign-in methods (Google vs email/password) ───────────
+@router.post("/sign-in-methods")
+async def sign_in_methods(body: SignInMethodsRequest):
+    """
+    Which sign-in methods exist for this email (service role lookup).
+    Used after a failed password login to explain Google-only accounts.
+    """
+    url = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        raise HTTPException(status_code=503, detail="Auth lookup unavailable")
+
+    email = str(body.email).strip().lower()
+    headers = {"Authorization": f"Bearer {key}", "apikey": key}
+
+    user: dict | None = None
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{url}/auth/v1/admin/users",
+                params={"page": 1, "per_page": 1, "filter": f"email.eq.{email}"},
+                headers=headers,
+                timeout=10,
+            )
+        if resp.status_code == 200:
+            users = (resp.json() or {}).get("users") or []
+            if users:
+                user = users[0]
+    except Exception:
+        pass
+
+    if not user:
+        try:
+            admin = get_supabase_admin()
+            prof = (
+                admin.table("profiles")
+                .select("id")
+                .ilike("email", email)
+                .limit(1)
+                .execute()
+            )
+            rows = prof.data or []
+            if rows:
+                got = admin.auth.admin.get_user_by_id(rows[0]["id"])
+                u = getattr(got, "user", None)
+                if u is not None:
+                    user = u.model_dump() if hasattr(u, "model_dump") else dict(u)
+        except Exception:
+            pass
+
+    if not user:
+        return {"methods": []}
+
+    raw = _providers_from_user(user)
+    methods: list[str] = []
+    if any(p in OAUTH_PROVIDERS for p in raw):
+        methods.append("google")
+    if "email" in raw:
+        methods.append("email")
+    return {"methods": methods}
 
 # ── Register ──────────────────────────────────────────────
 @router.post("/register")

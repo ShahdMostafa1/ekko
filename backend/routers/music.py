@@ -722,7 +722,10 @@ class SaveSongRequest(BaseModel):
     language_code:   str   = ""
     artist_style_id: str   = ""
     artist_label:    str   = ""
-    title:           str   = ""   # ← NEW
+    title:           str   = ""
+    memory_note:       str   = ""
+    memory_location:   str   = ""
+    memory_photo_url:  str   = ""
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -1036,6 +1039,14 @@ async def save_song(req: SaveSongRequest):
             print(f"[music] Song already saved task={req.task_id} user={req.user_id}")
             return _save_song_response(sb, req.user_id, existing, license_type, duplicate=True)
 
+    from cover_art import build_cover_data_url
+
+    cover_url = build_cover_data_url(
+        emotion=req.emotion,
+        region=req.region,
+        title=req.title,
+        mood_label=req.mood_label,
+    )
     row_data = {
         "user_id": req.user_id, "region": req.region,
         "region_label": req.region_label or REGION_DISPLAY.get(req.region, req.region),
@@ -1045,7 +1056,14 @@ async def save_song(req: SaveSongRequest):
         "prompt_used": req.prompt_used, "language": req.language,
         "artist_style_id": req.artist_style_id, "artist_label": req.artist_label,
         "title": req.title, "is_favorite": False, "license": license_type,
+        "cover_url": cover_url,
     }
+    if req.memory_note.strip():
+        row_data["memory_note"] = req.memory_note.strip()[:500]
+    if req.memory_location.strip():
+        row_data["memory_location"] = req.memory_location.strip()[:120]
+    if req.memory_photo_url.strip():
+        row_data["memory_photo_url"] = req.memory_photo_url.strip()[:500_000]
     if req.task_id:
         row_data["task_id"] = req.task_id
     # task_id column is optional — run backend/migrations/add_songs_task_id.sql first
@@ -1063,6 +1081,9 @@ async def save_song(req: SaveSongRequest):
             fallback.pop("is_favorite", None)
         if "task_id" in err:
             fallback.pop("task_id", None)
+        for col in ("cover_url", "memory_note", "memory_location", "memory_photo_url"):
+            if col in err:
+                fallback.pop(col, None)
         try:
             resp = sb.table("songs").insert(fallback).execute()
             row = (resp.data or [None])[0]
@@ -1096,9 +1117,12 @@ async def get_song_history(user_id: str):
 
 
 class UpdateSongRequest(BaseModel):
-    user_id:     str
-    title:       Optional[str]  = None
-    is_favorite: Optional[bool] = None
+    user_id:           str
+    title:             Optional[str]  = None
+    is_favorite:       Optional[bool] = None
+    memory_note:       Optional[str]  = None
+    memory_location:   Optional[str]  = None
+    memory_photo_url:  Optional[str]  = None
 
 
 @router.patch("/{song_id}", summary="Update song title or favorite status")
@@ -1111,6 +1135,13 @@ async def update_song(song_id: str, req: UpdateSongRequest):
         updates["title"] = req.title.strip()
     if req.is_favorite is not None:
         updates["is_favorite"] = req.is_favorite
+    if req.memory_note is not None:
+        updates["memory_note"] = (req.memory_note or "").strip()[:500] or None
+    if req.memory_location is not None:
+        updates["memory_location"] = (req.memory_location or "").strip()[:120] or None
+    if req.memory_photo_url is not None:
+        photo = (req.memory_photo_url or "").strip()
+        updates["memory_photo_url"] = photo[:500_000] if photo else None
     if not updates:
         raise HTTPException(400, "Nothing to update")
     try:

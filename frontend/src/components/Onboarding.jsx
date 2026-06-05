@@ -221,9 +221,9 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
           border-radius: 99px;
           padding: 4px 14px 4px 10px;
         }
-        .ob-logo-icon { font-size: 15px; }
+        .ob-logo-icon { font-size: 20px; }
         .ob-logo-text {
-          font-size: 13px;
+          font-size: 18px;
           font-weight: 800;
           color: #a78bfa;
           letter-spacing: .06em;
@@ -244,7 +244,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
           background-clip: text;
         }
         .ob-sub {
-          font-size: 13px;
+          font-size: 18px;
           color: #8b7eb8;
           margin: 0;
           line-height: 1.55;
@@ -342,7 +342,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
         }
 
         .ob-emoji {
-          font-size: 22px;
+          font-size: 27px;
           flex-shrink: 0;
           display: block;
           line-height: 1;
@@ -359,18 +359,18 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
           z-index: 1;
         }
         .ob-region-label {
-          font-size: 14px;
+          font-size: 19px;
           font-weight: 700;
           color: #e0d8ff;
           line-height: 1.2;
         }
         .ob-region-desc {
-          font-size: 11px;
+          font-size: 16px;
           color: #6b5f8a;
           line-height: 1.3;
         }
         .ob-arrow {
-          font-size: 16px;
+          font-size: 21px;
           flex-shrink: 0;
           position: relative;
           z-index: 1;
@@ -382,7 +382,7 @@ export default function Onboarding({ onComplete, userPlan = 'free', onUpgrade })
           position: relative;
           z-index: 1;
           text-align: center;
-          font-size: 12px;
+          font-size: 17px;
           color: #4b4570;
           margin: 14px 0 0;
           cursor: pointer;

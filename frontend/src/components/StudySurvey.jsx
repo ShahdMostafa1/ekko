@@ -371,7 +371,7 @@ export default function StudySurvey({
         .ss-done-icon {
           width: 64px; height: 64px; border-radius: 50%;
           background: rgba(52,211,153,.15); border: 2px solid rgba(52,211,153,.4);
-          color: #34d399; font-size: 28px; font-weight: 800;
+          color: #34d399; font-size: 33px; font-weight: 800;
           display: flex; align-items: center; justify-content: center;
           margin: 0 auto 16px;
         }
@@ -382,18 +382,18 @@ export default function StudySurvey({
           border: 1px solid rgba(168, 85, 247, 0.35);
           border-radius: 12px;
         }
-        .ss-gate-banner span { font-size: 18px; flex-shrink: 0; }
+        .ss-gate-banner span { font-size: 23px; flex-shrink: 0; }
         .ss-gate-banner p {
-          margin: 0; font-size: 13px; font-weight: 600;
+          margin: 0; font-size: 18px; font-weight: 600;
           color: #c4b5f0; line-height: 1.5;
         }
         .ss-header { text-align: center; margin-bottom: 20px; }
         .ss-eyebrow {
-          font-size: 11px; font-weight: 700; color: #a78bfa;
+          font-size: 16px; font-weight: 700; color: #a78bfa;
           text-transform: uppercase; letter-spacing: .1em; margin: 0 0 8px;
         }
         .ss-title { font-size: 1.5rem; font-weight: 800; color: #e0d8ff; margin: 0 0 8px; }
-        .ss-sub { font-size: 14px; color: #8b7eb8; margin: 0; line-height: 1.55; }
+        .ss-sub { font-size: 19px; color: #8b7eb8; margin: 0; line-height: 1.55; }
         .ss-muted { text-align: center; color: #6b5f8a; padding: 40px 0; }
         .ss-phase-tabs {
           display: flex; gap: 6px; margin-bottom: 16px;
@@ -401,7 +401,7 @@ export default function StudySurvey({
         }
         .ss-phase-tab {
           flex: 1; padding: 10px; border: none; border-radius: 10px;
-          background: transparent; color: #6b5f8a; font-size: 13px; font-weight: 700;
+          background: transparent; color: #6b5f8a; font-size: 18px; font-weight: 700;
           cursor: pointer; font-family: inherit;
         }
         .ss-phase-tab--active {
@@ -409,7 +409,7 @@ export default function StudySurvey({
           border: 1px solid rgba(168,85,247,.35);
         }
         .ss-banner {
-          font-size: 12px; color: #fbbf24; background: rgba(251,191,36,.08);
+          font-size: 17px; color: #fbbf24; background: rgba(251,191,36,.08);
           border: 1px solid rgba(251,191,36,.25); border-radius: 10px;
           padding: 10px 14px; margin-bottom: 16px;
         }
@@ -423,15 +423,15 @@ export default function StudySurvey({
         }
         .ss-block--text { background: transparent; border: none; padding: 0; }
         .ss-field { display: flex; flex-direction: column; gap: 8px; }
-        .ss-label { font-size: 13px; font-weight: 700; color: #c4b5f0; line-height: 1.45; }
-        .ss-optional { font-weight: 500; color: #6b5f8a; font-size: 12px; }
-        .ss-hint { font-size: 11px; color: #6b5f8a; margin: 0; }
+        .ss-label { font-size: 18px; font-weight: 700; color: #c4b5f0; line-height: 1.45; }
+        .ss-optional { font-weight: 500; color: #6b5f8a; font-size: 17px; }
+        .ss-hint { font-size: 16px; color: #6b5f8a; margin: 0; }
         .ss-options { display: flex; flex-direction: column; gap: 8px; }
         .ss-option {
           text-align: left; padding: 12px 14px; border-radius: 12px;
           background: rgba(255,255,255,.04);
           border: 1.5px solid rgba(176,158,224,.12);
-          color: #b09ee0; font-size: 13px; font-weight: 600;
+          color: #b09ee0; font-size: 18px; font-weight: 600;
           cursor: pointer; font-family: inherit;
           transition: border-color .15s, background .15s;
         }
@@ -445,7 +445,7 @@ export default function StudySurvey({
           padding: 8px 14px; border-radius: 999px;
           background: rgba(255,255,255,.05);
           border: 1.5px solid rgba(176,158,224,.15);
-          color: #b09ee0; font-size: 12px; font-weight: 600;
+          color: #b09ee0; font-size: 17px; font-weight: 600;
           cursor: pointer; font-family: inherit;
           transition: border-color .15s, background .15s;
         }
@@ -459,19 +459,19 @@ export default function StudySurvey({
           padding: 12px 14px; border-radius: 12px;
           background: rgba(255,255,255,.05);
           border: 1.5px solid rgba(176,158,224,.15);
-          color: #e0d8ff; font-size: 14px; font-family: inherit;
+          color: #e0d8ff; font-size: 19px; font-family: inherit;
           resize: vertical; min-height: 72px; outline: none;
         }
         .ss-textarea:focus { border-color: rgba(124,92,231,.5); }
         .ss-textarea::placeholder { color: #6b5f8a; }
         .ss-error {
-          font-size: 13px; color: #f87171;
+          font-size: 18px; color: #f87171;
           background: rgba(248,113,113,.08); border-radius: 10px; padding: 10px 14px; margin: 0;
         }
         .ss-btn {
           width: 100%; padding: 14px; border: none; border-radius: 14px;
           background: linear-gradient(135deg, #7c5ce7, #a855f7);
-          color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+          color: #fff; font-size: 20px; font-weight: 700; cursor: pointer;
           font-family: inherit; margin-top: 4px;
         }
         .ss-btn:disabled { opacity: .6; cursor: not-allowed; }

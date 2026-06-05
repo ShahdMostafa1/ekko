@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useI18n } from '../i18n/I18nContext.jsx'
 import { formatAuthError } from '../utils/authErrors'
+import { fetchSignInMethods, isGoogleOnlyAccount } from '../utils/authSignInMethods'
 
 const PASSWORD_RULES = [
   { key: 'lower',   label: 'One lowercase letter (a–z)',   test: p => /[a-z]/.test(p) },
@@ -30,6 +31,23 @@ export default function AuthScreen({ onAuth }) {
 
   const checks    = PASSWORD_RULES.map(r => ({ ...r, ok: r.test(password) }))
   const allPassed = checks.every(c => c.ok)
+
+  const resolveAuthError = async (message, context) => {
+    const m = (message || '').toLowerCase()
+    const isExists =
+      m.includes('already registered') ||
+      m.includes('already exists') ||
+      m.includes('user already registered')
+    const isBadLogin = m.includes('invalid login credentials')
+
+    if (isExists || isBadLogin) {
+      const methods = await fetchSignInMethods(email)
+      if (isGoogleOnlyAccount(methods)) {
+        return t(isExists ? 'auth.errors.googleAccountSignup' : 'auth.errors.googleAccount')
+      }
+    }
+    return formatAuthError(message, context, t)
+  }
 
   // ── Listen for OAuth + email confirmation redirects ───────────────────
   useEffect(() => {
@@ -98,7 +116,7 @@ export default function AuthScreen({ onAuth }) {
       }
 
     } catch (err) {
-      setError(formatAuthError(err.message, mode === 'register' ? 'signup' : 'login'))
+      setError(await resolveAuthError(err.message, mode === 'register' ? 'signup' : 'login'))
     } finally {
       setLoading(false)
     }
@@ -114,22 +132,27 @@ export default function AuthScreen({ onAuth }) {
       setResent(true)
     } catch (e) {
       console.error('Resend failed:', e)
-      setError(formatAuthError(e.message, 'resend'))
+      setError(formatAuthError(e.message, 'resend', t))
     } finally {
       setResending(false)
     }
   }
 
   const handleGoogle = async () => {
-    await supabase.auth.signInWithOAuth({
+    setError(null)
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'select_account' },
+      },
     })
+    if (oauthError) setError(formatAuthError(oauthError.message, 'login', t))
   }
 
   const handleForgotPassword = async () => {
     if (!email) {
-      setError('Please enter your email address first.')
+      setError(t('auth.errors.enterEmailFirst'))
       return
     }
     setLoading(true)
@@ -141,7 +164,7 @@ export default function AuthScreen({ onAuth }) {
       if (resetError) throw resetError
       setResetSent(true)
     } catch (err) {
-      setError(formatAuthError(err.message, 'reset'))
+      setError(formatAuthError(err.message, 'reset', t))
     } finally {
       setLoading(false)
     }
@@ -167,16 +190,16 @@ export default function AuthScreen({ onAuth }) {
         boxSizing: 'border-box', maxWidth: 420, margin: '0 auto',
       }}>
         <div className="auth-card" style={{ textAlign: 'center', gap: 20, maxWidth: 400 }}>
-          <div style={{ fontSize: 52, lineHeight: 1 }}>✉️</div>
+          <div style={{ fontSize: 57, lineHeight: 1 }}>✉️</div>
 
           <div>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+            <h2 style={{ fontSize: 27, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
               {t('auth.checkEmail')}
             </h2>
-            <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6 }}>
+            <p style={{ fontSize: 19, color: 'var(--text3)', lineHeight: 1.6 }}>
               {t('auth.sentConfirm')}
             </p>
-            <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
+            <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
               {email}
             </p>
           </div>
@@ -185,7 +208,7 @@ export default function AuthScreen({ onAuth }) {
             background: 'rgba(124,92,231,0.06)',
             border: '1px solid rgba(124,92,231,0.15)',
             borderRadius: 12, padding: '14px 16px',
-            fontSize: 13, color: 'var(--text3)', lineHeight: 1.7,
+            fontSize: 18, color: 'var(--text3)', lineHeight: 1.7,
             textAlign: dir === 'rtl' ? 'right' : 'left',
           }}>
             <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>{t('auth.confirmStepsTitle')}</p>
@@ -193,14 +216,14 @@ export default function AuthScreen({ onAuth }) {
           </div>
 
           {resent && (
-            <p style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600, margin: 0 }}>
+            <p style={{ fontSize: 18, color: 'var(--green)', fontWeight: 600, margin: 0 }}>
               {t('auth.resent')}
             </p>
           )}
 
           {error && (
             <p style={{
-              fontSize: 13, color: '#ff9b7a', margin: 0, lineHeight: 1.55,
+              fontSize: 18, color: '#ff9b7a', margin: 0, lineHeight: 1.55,
               background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.2)',
               borderRadius: 10, padding: '10px 12px', textAlign: 'left',
             }}>
@@ -226,7 +249,7 @@ export default function AuthScreen({ onAuth }) {
             }}
             style={{
               background: 'none', border: 'none',
-              color: 'var(--text3)', fontSize: 13,
+              color: 'var(--text3)', fontSize: 18,
               cursor: 'pointer', fontFamily: 'inherit',
               textDecoration: 'underline',
             }}
@@ -254,15 +277,15 @@ export default function AuthScreen({ onAuth }) {
 
           {resetSent ? (
             <>
-              <div style={{ fontSize: 52, lineHeight: 1 }}>📬</div>
+              <div style={{ fontSize: 57, lineHeight: 1 }}>📬</div>
               <div>
-                <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+                <h2 style={{ fontSize: 27, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
                   Reset link sent!
                 </h2>
-                <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
+                <p style={{ fontSize: 19, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
                   We sent a password reset link to
                 </p>
-                <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
+                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--purple-l)', marginTop: 4 }}>
                   {email}
                 </p>
               </div>
@@ -271,7 +294,7 @@ export default function AuthScreen({ onAuth }) {
                 background: 'rgba(124,92,231,0.06)',
                 border: '1px solid rgba(124,92,231,0.15)',
                 borderRadius: 12, padding: '14px 16px',
-                fontSize: 13, color: 'var(--text3)', lineHeight: 1.7,
+                fontSize: 18, color: 'var(--text3)', lineHeight: 1.7,
                 textAlign: 'left',
               }}>
                 <p style={{ margin: '0 0 6px', fontWeight: 700, color: 'var(--text2)' }}>What to do:</p>
@@ -288,12 +311,12 @@ export default function AuthScreen({ onAuth }) {
             </>
           ) : (
             <>
-              <div style={{ fontSize: 52, lineHeight: 1 }}>🔑</div>
+              <div style={{ fontSize: 57, lineHeight: 1 }}>🔑</div>
               <div>
-                <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
+                <h2 style={{ fontSize: 27, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'Playfair Display, serif', fontStyle: 'italic' }}>
                   Forgot your password?
                 </h2>
-                <p style={{ fontSize: 14, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
+                <p style={{ fontSize: 19, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
                   No worries — enter your email and we'll send you a reset link.
                 </p>
               </div>
@@ -323,7 +346,7 @@ export default function AuthScreen({ onAuth }) {
                 onClick={goBackToLogin}
                 style={{
                   background: 'none', border: 'none',
-                  color: 'var(--text3)', fontSize: 13,
+                  color: 'var(--text3)', fontSize: 18,
                   cursor: 'pointer', fontFamily: 'inherit',
                   textDecoration: 'underline',
                 }}
@@ -355,7 +378,7 @@ export default function AuthScreen({ onAuth }) {
             onClick={() => setLocale(code)}
             style={{
               padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
-              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+              fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 700,
               background: locale === code ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.05)',
               border: locale === code ? '1px solid rgba(124,92,231,.4)' : '1px solid rgba(255,255,255,.1)',
               color: locale === code ? '#e0d8ff' : '#8b7eb8',
@@ -366,7 +389,7 @@ export default function AuthScreen({ onAuth }) {
         ))}
       </div>
       <div className="auth-logo">EKKO</div>
-      <p className="auth-tagline">{tagline}</p>
+      <p className="ekko-tagline auth-tagline">{tagline}</p>
       <h1 className="auth-headline">
         <em>{mode === 'login' ? t('auth.welcomeBack') : t('auth.startCreating')}</em>
       </h1>
@@ -458,7 +481,7 @@ export default function AuthScreen({ onAuth }) {
               }}
               style={{
                 background: 'none', border: 'none',
-                color: 'var(--purple-l)', fontSize: 13,
+                color: 'var(--purple-l)', fontSize: 18,
                 cursor: 'pointer', fontFamily: 'inherit',
                 textDecoration: 'none', fontWeight: 500,
                 padding: 0,
@@ -479,7 +502,7 @@ export default function AuthScreen({ onAuth }) {
             padding: '12px 14px',
             display: 'flex', flexDirection: 'column', gap: '7px',
           }}>
-            <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 700, color: '#8b7eb8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <p style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 700, color: '#8b7eb8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Password requirements
             </p>
             {checks.map(c => (
@@ -498,7 +521,7 @@ export default function AuthScreen({ onAuth }) {
                   )}
                 </div>
                 <span style={{
-                  fontSize: '13px',
+                  fontSize: '18px',
                   color: c.ok ? '#5c3fc7' : '#9e8fc0',
                   fontWeight: c.ok ? 600 : 400,
                   transition: 'all 0.2s ease',

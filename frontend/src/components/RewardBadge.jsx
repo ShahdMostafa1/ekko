@@ -54,7 +54,7 @@ export default function RewardBadge({ label, sub }) {
           border: `1.5px solid ${accent}55`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           animation: 'rbIconPulse 1.2s ease-in-out infinite',
-          fontSize: 18,
+          fontSize: 23,
         }}>
           {(sub || '').toLowerCase().includes('xp')     && '⚡'}
           {(sub || '').toLowerCase().includes('streak') && '🔥'}
@@ -68,14 +68,14 @@ export default function RewardBadge({ label, sub }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{
             margin: '0 0 1px',
-            fontSize: 15, fontWeight: 800,
+            fontSize: 20, fontWeight: 800,
             color: accent,
             fontFamily: "'Syne', sans-serif",
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>{label}</p>
           {sub && (
             <p style={{
-              margin: 0, fontSize: 11, color: 'rgba(255,255,255,.45)',
+              margin: 0, fontSize: 16, color: 'rgba(255,255,255,.45)',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>{sub}</p>
           )}

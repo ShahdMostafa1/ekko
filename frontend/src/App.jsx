@@ -8,6 +8,7 @@ import CoCreation          from './components/CoCreation'
 import MusicPlayer         from './components/MusicPlayer'
 import SongHistory         from './components/SongHistory'
 import RewardsScreen       from './components/RewardsScreen'
+import JourneyScreen       from './components/JourneyScreen'
 import RewardBadge         from './components/RewardBadge'
 import BackButton          from './components/BackButton'
 import AdminDashboard      from './components/AdminDashboard'
@@ -60,6 +61,7 @@ const BACK_SCREEN_KEYS = {
   cocreation: 'back.changeMood',
   player:     'back.newMood',
   history:    'back.back',
+  journey:    'back.back',
   rewards:    'back.back',
   plans:      'back.back',
   survey:     'back.back',
@@ -106,7 +108,7 @@ function EkkoOrbLogo({ compact = false }) {
         .orb-dot{position:absolute;border-radius:50%;top:-4px;left:50%;transform:translateX(-50%)}
         .orb-dot-1{width:7px;height:7px;background:#67e8f9;box-shadow:0 0 10px #67e8f9,0 0 20px #60a5fa}
         .orb-dot-2{width:5px;height:5px;background:#a855f7;box-shadow:0 0 10px #a855f7;top:auto;bottom:-3px}
-        .orb-brand{font-family:'Syne',sans-serif;font-weight:800;font-size:${brandF};letter-spacing:-1px;line-height:1;background:linear-gradient(130deg,#e0c3fc 0%,#a78bfa 35%,#60a5fa 70%,#67e8f9 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;background-size:200% 200%;filter:drop-shadow(0 0 18px rgba(167,139,250,0.6));animation:orbBrandShift 6s ease-in-out infinite}
+        .orb-brand{font-family:'Syne',sans-serif;font-weight:800;font-size: ${brandF};letter-spacing:-1px;line-height:1;background:linear-gradient(130deg,#e0c3fc 0%,#a78bfa 35%,#60a5fa 70%,#67e8f9 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;background-size:200% 200%;filter:drop-shadow(0 0 18px rgba(167,139,250,0.6));animation:orbBrandShift 6s ease-in-out infinite}
         @keyframes orbBrandShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
       `}</style>
       <div className="orb-col">
@@ -214,6 +216,7 @@ export default function App() {
       cocreation: 'mood',
       player:     'mood',
       history:    'mood',
+      journey:    'mood',
       rewards:    'mood',
       plans:      'mood',
       survey:     'mood',
@@ -340,6 +343,17 @@ export default function App() {
 
   const goToPlans = useCallback(() => navigateTo('plans'), [navigateTo])
 
+  /** Any “create song” entry — region picker first, then language (if needed), then mood. */
+  const startCreateFlow = useCallback(() => {
+    if (surveyLocked) {
+      promptSurveyRequired()
+      return
+    }
+    setMusicParams(null)
+    setMoodData(null)
+    navigateTo('onboarding', { reset: true })
+  }, [surveyLocked, promptSurveyRequired, navigateTo])
+
   const refreshUserPlan = useCallback(async () => {
     const currentUser = userRef.current
     if (!currentUser) return
@@ -459,7 +473,7 @@ export default function App() {
       })
       const newlyEarned = getNewlyEarnedBadges(stats, currentUser.id)
       const songBadges = newlyEarned.filter(b =>
-        ['night_owl', 'multilingual', 'first_song', 'composer_5'].includes(b.id),
+        ['night_owl', 'multilingual', 'first_song', 'composer_5', 'passport_3', 'passport_all'].includes(b.id),
       )
       if (songBadges.length > 0) {
         songBadges.forEach(b => markBadgeAnnounced(currentUser.id, b.id))
@@ -665,7 +679,11 @@ export default function App() {
       await supabase.from('profiles')
         .update({ region: selectedRegion.id }).eq('id', userRef.current.id)
     }
-    navigateTo('language')
+    if (languageRef.current) {
+      navigateTo('mood')
+    } else {
+      navigateTo('language')
+    }
   }
 
   const handleLanguagePick = async (selectedLanguage) => {
@@ -737,7 +755,9 @@ export default function App() {
     await generateMusic(params, finalScale, finalInstr)
   }
 
-  const handleSignOut = async () => { await supabase.auth.signOut() }
+  const handleSignOut = async () => {
+    await supabase.auth.signOut({ scope: 'global' })
+  }
 
   const regionDef = REGION_DEFAULTS[region?.id] || REGION_DEFAULTS.global
 
@@ -770,13 +790,18 @@ export default function App() {
         onClose={() => setSidebarOpen(false)}
         screen={screen}
         onNavigate={async (dest) => {
-          const VALID = ['mood','history','rewards','plans','survey','language','cocreation','player']
+          const VALID = ['mood','history','journey','rewards','plans','survey','language','cocreation','player']
           if (!VALID.includes(dest)) return
           if (surveyLocked && dest !== 'survey') {
             promptSurveyRequired()
             return
           }
           if (screen === 'player' && dest !== 'player') setMusicParams(null)
+          if (dest === 'mood') {
+            startCreateFlow()
+            setSidebarOpen(false)
+            return
+          }
           if (dest === 'survey' && userRef.current?.id && !surveyLocked) {
             const st = await fetchSurveyStatus(userRef.current.id, { force: true })
             setSurveyStatus(st)
@@ -818,16 +843,16 @@ export default function App() {
         </button>
 
         <div
-          className="ekko-logo"
+          className="ekko-header-brand"
           onClick={() => {
             if (surveyLocked) {
               promptSurveyRequired()
               return
             }
-            navigateTo('mood', { reset: true })
+            startCreateFlow()
           }}
         >
-          Ekko
+          <span className="ekko-logo-word">Ekko</span>
           {region && (
             <span className="ekko-region-tag">
               {region.emoji} {region.label}
@@ -839,9 +864,11 @@ export default function App() {
 
       {/* Main */}
       <main className={
-        screen === 'plans' ? 'ekko-main ekko-main--wide'
-        : screen === 'onboarding' ? 'ekko-main ekko-main--onboarding'
-        : 'ekko-main'
+        ['plans', 'journey', 'rewards', 'history'].includes(screen)
+          ? 'ekko-main ekko-main--wide'
+          : screen === 'onboarding'
+          ? 'ekko-main ekko-main--onboarding'
+          : 'ekko-main'
       }>
         {screen !== 'onboarding' && screen !== 'generating' && BACK_SCREEN_KEYS[screen] && !(screen === 'survey' && surveyLocked) && (
           <div className="back-btn-wrap">
@@ -854,7 +881,7 @@ export default function App() {
             <div className="onboarding-shell__logo">
               <EkkoOrbLogo compact />
               <div className="onboarding-shell__hook">
-                <p className="onboarding-tagline">{tagline}</p>
+                <p className="ekko-tagline onboarding-tagline">{tagline}</p>
                 <p className="onboarding-hook">{hookShort}</p>
               </div>
             </div>
@@ -939,12 +966,22 @@ export default function App() {
           />
         )}
 
+        {screen === 'journey' && (
+          <JourneyScreen
+            userId={userRef.current?.id || user?.id || ''}
+            xp={xp}
+            userName={userName}
+            onCreateSong={startCreateFlow}
+          />
+        )}
+
         {screen === 'rewards' && (
           <RewardsScreen
             xp={xp}
             userId={userRef.current?.id}
             badgeRefreshKey={badgeRefreshKey}
-            onStartChallenge={() => navigateTo('mood')}
+            onStartChallenge={startCreateFlow}
+            onViewJourney={() => navigateTo('journey')}
           />
         )}
 

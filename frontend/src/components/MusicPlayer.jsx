@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useI18n } from '../i18n/I18nContext.jsx';
+import { uploadMemoryPhoto, patchSongMemory } from '../utils/memoryCapsule';
 import { canDownload, hasPriorityQueue } from '../utils/planUtils';
 import {
   ESTIMATED_WAIT_SEC,
@@ -16,6 +17,8 @@ import {
   playFromUserGesture,
   revokeBlobAudioUrl,
 } from '../utils/mobileAudio';
+import ShareActions from './ShareActions';
+import { songShareUrl } from '../utils/shareLinks';
 
 const POLL_INTERVAL_FREE = 1500;
 const POLL_INTERVAL_PRIORITY = 1000;
@@ -41,7 +44,17 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
   const [audioError, setAudioError]     = useState(null);
   const [showLyrics, setShowLyrics]     = useState(false);
   const [savedOk, setSavedOk]           = useState(false);
-  const [copied, setCopied]             = useState(false);
+  const [coverUrl, setCoverUrl]         = useState(null);
+  const [showMemory, setShowMemory]     = useState(false);
+  const [memoryNote, setMemoryNote]     = useState("");
+  const [memoryPlace, setMemoryPlace]   = useState("");
+  const [memorySaved, setMemorySaved]   = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [memoryError, setMemoryError]   = useState(null);
+  const [memoryPhotoPreview, setMemoryPhotoPreview] = useState(null);
+  const [memoryPhotoFile, setMemoryPhotoFile]       = useState(null);
+  const [savedSongId, setSavedSongId]   = useState(null);
+  const memoryInputRef = useRef(null);
 
   const lyrics      = params?.lyrics       || null;
   const promptUsed  = params?.prompt_used  || "";
@@ -180,6 +193,8 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         }
         setSavedOk(true);
         const songId = d.song?.id;
+        setSavedSongId(songId || null);
+        if (d.song?.cover_url) setCoverUrl(d.song.cover_url);
         onSaved?.({
           songId,
           duplicate: !!d.duplicate,
@@ -278,15 +293,51 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
     return `${Math.floor(sec / 60)}:${Math.floor(sec % 60).toString().padStart(2, "0")}`;
   };
 
-  const handleShare = async () => {
-    const text = `🎵 Just created "${songTitle}" on Ekko — an AI song made from my mood!\n${window.location.href}`;
-    if (navigator.share) {
-      try { await navigator.share({ title: songTitle, text }); return; } catch {}
-    }
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const onMemoryPhotoPick = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    setMemoryPhotoFile(file);
+    setMemoryPhotoPreview(URL.createObjectURL(file));
+    setMemoryError(null);
   };
+
+  const clearMemoryPhoto = () => {
+    if (memoryPhotoPreview?.startsWith("blob:")) URL.revokeObjectURL(memoryPhotoPreview);
+    setMemoryPhotoPreview(null);
+    setMemoryPhotoFile(null);
+    if (memoryInputRef.current) memoryInputRef.current.value = "";
+  };
+
+  const saveMemory = async () => {
+    if (!savedSongId || !params?.user_id) return;
+    const hasContent = memoryNote.trim() || memoryPlace.trim() || memoryPhotoFile;
+    if (!hasContent) return;
+    setMemorySaving(true);
+    setMemoryError(null);
+    try {
+      let photoUrl;
+      if (memoryPhotoFile) {
+        photoUrl = await uploadMemoryPhoto(params.user_id, savedSongId, memoryPhotoFile);
+      }
+      const data = await patchSongMemory(savedSongId, params.user_id, {
+        note: memoryNote.trim(),
+        location: memoryPlace.trim(),
+        photoUrl: photoUrl ?? undefined,
+      });
+      if (data.updated) {
+        setMemorySaved(true);
+        if (photoUrl) setMemoryPhotoPreview(photoUrl);
+      }
+    } catch (e) {
+      console.error("[memory]", e);
+      setMemoryError(t("journey.memoryError"));
+    } finally {
+      setMemorySaving(false);
+    }
+  };
+
+  const shareUrl = savedSongId ? songShareUrl(savedSongId) : '';
+  const shareText = t('share.songBlurb', { title: songTitle });
 
   // ── Generating screen ──────────────────────────────────────
   if (polling || (!audioUrl && taskId)) {
@@ -348,7 +399,11 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
       {/* Header */}
       <div style={s.header}>
         <div style={s.albumArt}>
-          <span style={{ fontSize: 28 }}>🎵</span>
+          {coverUrl ? (
+            <img src={coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+          ) : (
+            <span style={{ fontSize: 33 }}>🎵</span>
+          )}
           {playing && <div style={s.albumPulse} />}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -440,24 +495,81 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
               🔒 Download (Groove+)
             </button>
           )}
-          <button style={{ ...s.actionBtn, cursor: "pointer", border: "none" }} onClick={handleShare}>
-            {copied ? (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-                <span style={{ color: "#34d399" }}>Copied!</span>
-              </>
-            ) : (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                </svg>
-                Share
-              </>
-            )}
+          <div className="mp-share-wrap" style={{ flex: 1, minWidth: 0 }}>
+            <ShareActions
+              url={shareUrl}
+              title={songTitle}
+              text={shareText}
+              disabled={!savedSongId}
+              compact
+            />
+          </div>
+        </div>
+      )}
+
+      {savedOk && (
+        <div style={s.memorySection}>
+          <button type="button" style={s.memoryToggle} onClick={() => setShowMemory(v => !v)}>
+            {showMemory ? "▲" : "📔"} {t("journey.memoryTitle")}
           </button>
+          {showMemory && (
+            <div style={s.memoryForm}>
+              <p style={s.memoryHint}>{t("journey.memoryHint")}</p>
+              <input
+                ref={memoryInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: "none" }}
+                onChange={onMemoryPhotoPick}
+              />
+              {memoryPhotoPreview ? (
+                <div style={s.memoryPhotoPreviewWrap}>
+                  <img src={memoryPhotoPreview} alt="" style={s.memoryPhotoPreview} />
+                  {!memorySaved && (
+                    <button type="button" style={s.memoryPhotoRemove} onClick={clearMemoryPhoto}>✕</button>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  style={s.memoryPhotoBtn}
+                  onClick={() => memoryInputRef.current?.click()}
+                  disabled={memorySaved}
+                >
+                  📷 {t("journey.memoryPhoto")}
+                </button>
+              )}
+              <input
+                style={s.memoryInput}
+                placeholder={t("journey.memoryPlace")}
+                value={memoryPlace}
+                onChange={e => setMemoryPlace(e.target.value)}
+                maxLength={120}
+                disabled={memorySaved}
+              />
+              <textarea
+                style={{ ...s.memoryInput, minHeight: 72, resize: "vertical" }}
+                placeholder={t("journey.memoryNote")}
+                value={memoryNote}
+                onChange={e => setMemoryNote(e.target.value)}
+                maxLength={500}
+                disabled={memorySaved}
+              />
+              {memoryError && <p style={s.memoryErrorText}>{memoryError}</p>}
+              <button
+                type="button"
+                style={s.memoryBtn}
+                onClick={saveMemory}
+                disabled={
+                  memorySaved || memorySaving
+                  || (!memoryNote.trim() && !memoryPlace.trim() && !memoryPhotoFile)
+                }
+              >
+                {memorySaved ? t("journey.memorySaved") : memorySaving ? t("journey.memorySaving") : t("journey.memorySave")}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -519,9 +631,9 @@ const s = {
     boxShadow: "0 0 40px rgba(168,85,247,.6)",
     animation: "orbPulse 2s ease-in-out infinite",
   },
-  pollLabel:  { margin: 0, fontSize: 16, fontWeight: 700, textAlign: "center" },
+  pollLabel:  { margin: 0, fontSize: 21, fontWeight: 700, textAlign: "center" },
   pollCountdown: {
-    margin: 0, fontSize: 14, fontWeight: 600, textAlign: "center",
+    margin: 0, fontSize: 19, fontWeight: 600, textAlign: "center",
     color: "rgba(196,132,252,.95)", fontVariantNumeric: "tabular-nums",
   },
   genProgressTrack: {
@@ -533,7 +645,7 @@ const s = {
     background: "linear-gradient(90deg,#7c5ce7,#c084fc)",
     transition: "width .8s ease-out",
   },
-  pollSub:    { margin: 0, fontSize: 12, color: "rgba(255,255,255,.5)", textAlign: "center" },
+  pollSub:    { margin: 0, fontSize: 17, color: "rgba(255,255,255,.5)", textAlign: "center" },
   dots:       { display: "flex", gap: 6 },
   dot: {
     width: 8, height: 8, borderRadius: "50%", background: "#a855f7",
@@ -542,9 +654,9 @@ const s = {
   lyricsPreview: {
     width: "100%", background: "rgba(255,255,255,.06)", borderRadius: 12, padding: "12px 16px",
   },
-  lyricsPreviewLabel: { margin: "0 0 6px", fontSize: 11, color: "#a855f7", fontWeight: 600 },
+  lyricsPreviewLabel: { margin: "0 0 6px", fontSize: 16, color: "#a855f7", fontWeight: 600 },
   lyricsPreviewText: {
-    margin: 0, fontSize: 13, color: "rgba(255,255,255,.7)",
+    margin: 0, fontSize: 18, color: "rgba(255,255,255,.7)",
     lineHeight: 1.7, whiteSpace: "pre-line", fontStyle: "italic",
   },
   // ── Header with album art circle ──
@@ -562,14 +674,14 @@ const s = {
     animation: "albumGlow 1.8s ease-in-out infinite",
   },
   title: {
-    margin: 0, fontSize: 19, fontWeight: 700, lineHeight: 1.25,
+    margin: 0, fontSize: 24, fontWeight: 700, lineHeight: 1.25,
     // Allow 2 lines instead of clipping with ellipsis on one
     display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
     overflow: "hidden",
   },
-  subtitle: { margin: "5px 0 0", fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
+  subtitle: { margin: "5px 0 0", fontSize: 17, color: "rgba(255,255,255,.5)", lineHeight: 1.4 },
   savedBadge: {
-    fontSize: 11, color: "#34d399", fontWeight: 700,
+    fontSize: 16, color: "#34d399", fontWeight: 700,
     background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)",
     borderRadius: 20, padding: "4px 10px", flexShrink: 0,
   },
@@ -597,7 +709,7 @@ const s = {
     borderRadius: 1, transition: "width .1s linear",
   },
   timeRow:  { display: "flex", justifyContent: "space-between", width: "100%", marginTop: -10 },
-  timeText: { fontSize: 11, color: "rgba(255,255,255,.38)", fontVariantNumeric: "tabular-nums" },
+  timeText: { fontSize: 16, color: "rgba(255,255,255,.38)", fontVariantNumeric: "tabular-nums" },
   playBtn: {
     width: 72, height: 72, borderRadius: "50%", border: "none",
     background: "linear-gradient(135deg,#7c5ce7,#a855f7)",
@@ -609,16 +721,16 @@ const s = {
     borderTop: "3px solid #a855f7", borderRadius: "50%",
     animation: "spin .9s linear infinite",
   },
-  errorText: { fontSize: 13, color: "#f87171", margin: 0, textAlign: "center" },
-  openLink:  { fontSize: 12, color: "#a855f7", textDecoration: "underline" },
+  errorText: { fontSize: 18, color: "#f87171", margin: 0, textAlign: "center" },
+  openLink:  { fontSize: 17, color: "#a855f7", textDecoration: "underline" },
   // ── NEW: action row for download + share ──
   actionRow: {
-    display: "flex", gap: 10, width: "100%",
+    display: "flex", flexWrap: "wrap", gap: 10, width: "100%",
   },
   actionBtn: {
     flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
     gap: 7, padding: "10px 0",
-    fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.8)",
+    fontSize: 18, fontWeight: 600, color: "rgba(255,255,255,.8)",
     background: "rgba(255,255,255,.07)",
     border: "1px solid rgba(255,255,255,.13)",
     borderRadius: 14, textDecoration: "none",
@@ -632,18 +744,48 @@ const s = {
     borderRadius: 14,
     background: "linear-gradient(135deg,#7c5ce7,#a855f7)",
     color: "#fff",
-    fontSize: 15,
+    fontSize: 20,
     fontWeight: 700,
     cursor: "pointer",
     fontFamily: "inherit",
     boxShadow: "0 6px 24px rgba(124,92,231,.45)",
     transition: "opacity .2s, transform .12s",
   },
+  memorySection: { width: "100%", marginTop: 8 },
+  memoryToggle: {
+    width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)",
+    borderRadius: 14, padding: "10px 14px", color: "rgba(255,255,255,.85)",
+    fontSize: 18, fontWeight: 600, cursor: "pointer", textAlign: "center",
+  },
+  memoryForm: { marginTop: 10, display: "flex", flexDirection: "column", gap: 8 },
+  memoryHint: { margin: 0, fontSize: 17, color: "rgba(255,255,255,.45)" },
+  memoryInput: {
+    width: "100%", boxSizing: "border-box", background: "rgba(0,0,0,.25)",
+    border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, padding: "10px 12px",
+    color: "#fff", fontSize: 18, fontFamily: "inherit",
+  },
+  memoryBtn: {
+    padding: "10px 16px", borderRadius: 10, border: "none", cursor: "pointer",
+    background: "linear-gradient(90deg,#7c5ce7,#a855f7)", color: "#fff",
+    fontWeight: 700, fontSize: 18,
+  },
+  memoryPhotoBtn: {
+    width: "100%", padding: "12px", borderRadius: 10, cursor: "pointer",
+    background: "rgba(255,255,255,.06)", border: "1px dashed rgba(168,85,247,.45)",
+    color: "#c084fc", fontSize: 18, fontWeight: 600,
+  },
+  memoryPhotoPreviewWrap: { position: "relative", borderRadius: 12, overflow: "hidden" },
+  memoryPhotoPreview: { width: "100%", maxHeight: 200, objectFit: "cover", display: "block" },
+  memoryPhotoRemove: {
+    position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%",
+    border: "none", background: "rgba(0,0,0,.65)", color: "#fff", cursor: "pointer",
+  },
+  memoryErrorText: { margin: 0, fontSize: 17, color: "#f87171" },
   lyricsSection: { width: "100%", display: "flex", flexDirection: "column", gap: 8 },
   lyricsToggle: {
     background: "rgba(168,85,247,.12)", border: "1px solid rgba(168,85,247,.28)",
     borderRadius: 20, padding: "8px 18px", color: "#c084fc",
-    fontSize: 13, fontWeight: 600, cursor: "pointer", alignSelf: "center",
+    fontSize: 18, fontWeight: 600, cursor: "pointer", alignSelf: "center",
     transition: "background .2s",
   },
   lyricsBox: {
@@ -654,7 +796,7 @@ const s = {
     border: "1px solid rgba(255,255,255,.06)",
   },
   lyricLine: {
-    margin: 0, fontSize: 14, color: "rgba(255,255,255,.82)",
+    margin: 0, fontSize: 19, color: "rgba(255,255,255,.82)",
     lineHeight: 1.85, whiteSpace: "pre-wrap",
   },
 };

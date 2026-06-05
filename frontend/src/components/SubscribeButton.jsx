@@ -86,7 +86,7 @@ export default function SubscribeButton({ plan, userId, email, currentPlan, onSu
           ? 'linear-gradient(135deg, #7c3aed, #2563eb)'
           : 'linear-gradient(135deg, #6d28d9, #4f46e5)',
         color: isCurrentPlan || isHigherPlan ? 'rgba(255,255,255,0.45)' : 'white',
-        fontSize: '13px',
+        fontSize: '18px',
         fontWeight: 600,
         cursor: isCurrentPlan || isHigherPlan ? 'default' : 'pointer',
         opacity: loading ? 0.7 : 1,

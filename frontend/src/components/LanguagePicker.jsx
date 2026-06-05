@@ -117,7 +117,7 @@ export default function LanguagePicker({ region, onComplete }) {
         }
 
         .lp-eyebrow {
-          font-size: 12px;
+          font-size: 17px;
           font-weight: 700;
           letter-spacing: .1em;
           text-transform: uppercase;
@@ -127,7 +127,7 @@ export default function LanguagePicker({ region, onComplete }) {
         }
 
         .lp-headline {
-          font-size: 28px;
+          font-size: 33px;
           font-weight: 800;
           color: #fff;
           margin: 0 0 10px;
@@ -140,7 +140,7 @@ export default function LanguagePicker({ region, onComplete }) {
         }
 
         .lp-sub {
-          font-size: 13px;
+          font-size: 18px;
           color: #8b7eb8;
           margin: 0;
         }
@@ -178,7 +178,7 @@ export default function LanguagePicker({ region, onComplete }) {
         }
 
         .lp-flag {
-          font-size: 26px;
+          font-size: 31px;
           line-height: 1;
           flex-shrink: 0;
         }
@@ -192,20 +192,20 @@ export default function LanguagePicker({ region, onComplete }) {
         }
 
         .lp-label {
-          font-size: 15px;
+          font-size: 20px;
           font-weight: 700;
           color: #e0d8ff;
           line-height: 1;
         }
 
         .lp-native {
-          font-size: 12px;
+          font-size: 17px;
           color: #8b7eb8;
           font-weight: 500;
         }
 
         .lp-arrow {
-          font-size: 14px;
+          font-size: 19px;
           color: var(--ac);
           opacity: .6;
           transition: opacity .18s, transform .18s;

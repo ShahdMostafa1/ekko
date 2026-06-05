@@ -11,6 +11,8 @@ export const BADGES = [
   { id: 'night_owl',    emoji: '🦉', label: 'Night Owl',      desc: 'Created a song after midnight',    how: 'Generate a song after midnight',  why: 'A midnight creation — only Night Owls dare this!',           xpNeeded: 0,    songsNeeded: 0, streakNeeded: 0,  regionsNeeded: 0 },
   { id: 'streak_30',    emoji: '🌙', label: 'Moonwalker',     desc: '30-day streak — legendary',        how: 'Check in 30 days in a row',       why: "30 days straight — you're a true Moonwalker!",              xpNeeded: 0,    songsNeeded: 0, streakNeeded: 30, regionsNeeded: 0 },
   { id: 'xp_1000',      emoji: '⭐', label: 'Legend',         desc: 'Hit 1000 XP — you are the music', how: 'Earn 1000 XP',                    why: '1000 XP reached — you ARE the music. Legend status!',        xpNeeded: 1000, songsNeeded: 0, streakNeeded: 0,  regionsNeeded: 0 },
+  { id: 'passport_3',   emoji: '🛂', label: 'Cultural Explorer', desc: 'Stamped 3 regions in your passport', how: 'Create songs in 3 regions', why: 'Three cultures explored — your passport is filling up!', xpNeeded: 0, songsNeeded: 0, streakNeeded: 0, regionsNeeded: 3 },
+  { id: 'passport_all', emoji: '🌐', label: 'Global Maestro', desc: 'Stamped every cultural region', how: 'Create a song in all 7 regions', why: 'Every region stamped — you are a Global Maestro!', xpNeeded: 0, songsNeeded: 0, streakNeeded: 0, regionsNeeded: 7 },
 ]
 
 /** Hour 0–4 local time = after midnight, before 5 AM. */

@@ -251,7 +251,7 @@ export default function PlansScreen({ onClose, onPlanChange }) {
         transform: mounted ? "translateY(0)" : "translateY(12px)",
         transition: "opacity .4s ease, transform .4s ease",
       }}>
-        <div style={{ fontSize: 32, marginBottom: 8 }}>✨</div>
+        <div style={{ fontSize: 37, marginBottom: 8 }}>✨</div>
         <h1 className="plans-title" style={s.title}>Choose Your Plan</h1>
         <p style={s.subtitle}>Unlock your full sonic potential</p>
 
@@ -292,7 +292,7 @@ export default function PlansScreen({ onClose, onPlanChange }) {
       {canUseApiAccess(currentPlan) && isFullyActive && (
         <div style={s.apiKeyBox}>
           <div style={s.apiKeyHeader}>
-            <span style={{ fontSize: 18 }}>🔑</span>
+            <span style={{ fontSize: 23 }}>🔑</span>
             <div>
               <p style={s.apiKeyTitle}>Studio API Access</p>
               <p style={s.apiKeySub}>
@@ -364,7 +364,7 @@ export default function PlansScreen({ onClose, onPlanChange }) {
               )}
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <span style={{ fontSize: 22 }}>{plan.icon}</span>
+                <span style={{ fontSize: 27 }}>{plan.icon}</span>
                 <h2 style={{ ...s.planName, color: plan.color }}>{plan.name}</h2>
               </div>
 
@@ -385,7 +385,7 @@ export default function PlansScreen({ onClose, onPlanChange }) {
               <ul style={s.featureList}>
                 {plan.features.map(f => (
                   <li key={f} style={s.featureItem}>
-                    <span style={{ color: plan.color, flexShrink: 0, fontSize: 12, fontWeight: 800 }}>✓</span>
+                    <span style={{ color: plan.color, flexShrink: 0, fontSize: 17, fontWeight: 800 }}>✓</span>
                     <span style={{ fontSize: "0.83rem", color: "#c4b5f0", lineHeight: 1.4 }}>{f}</span>
                   </li>
                 ))}
@@ -414,15 +414,14 @@ export default function PlansScreen({ onClose, onPlanChange }) {
                 <button
                   style={{
                     ...s.ctaBtn,
-                    background: plan.highlight
-                      ? `linear-gradient(135deg, ${plan.color}cc, ${plan.color})`
-                      : "transparent",
-                    border:   plan.highlight ? "none" : `1.5px solid ${plan.color}`,
-                    color:    "#fff",
-                    cursor:   isUpgrading ? "wait" : "pointer",
-                    opacity:  isUpgrading ? 0.7 : 1,
-                    marginTop: "auto", paddingTop: 14,
-                    boxShadow: plan.highlight && !isUpgrading ? `0 4px 20px ${plan.glow}` : "none",
+                    background: `linear-gradient(135deg, ${plan.color}dd, ${plan.color})`,
+                    border: "none",
+                    color: "#fff",
+                    cursor: isUpgrading ? "wait" : "pointer",
+                    opacity: isUpgrading ? 0.7 : 1,
+                    marginTop: "auto",
+                    paddingTop: 14,
+                    boxShadow: !isUpgrading ? `0 4px 20px ${plan.glow}` : "none",
                   }}
                   disabled={isUpgrading}
                   onClick={() => handleUpgrade(plan.id)}
@@ -511,7 +510,7 @@ const s = {
     borderRadius: 50,
     padding:      "8px 18px",
     color:        "#8b7eb8",
-    fontSize:     13,
+    fontSize:     18,
     fontWeight:   600,
     cursor:       "pointer",
     marginBottom: 24,
@@ -545,7 +544,7 @@ const s = {
     padding:        "6px 14px",
   },
   toggleLabel: {
-    fontSize:   13,
+    fontSize:   18,
     fontWeight: 600,
     transition: "color .2s",
     display:    "flex",
@@ -579,7 +578,7 @@ const s = {
     color:        "#a78bfa",
     borderRadius: 99,
     padding:      "2px 8px",
-    fontSize:     11,
+    fontSize:     16,
     fontWeight:   700,
   },
   banner: {

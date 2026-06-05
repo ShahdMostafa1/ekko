@@ -1,6 +1,6 @@
 # Ekko Frontend
 
-React + Vite UI for [Ekko](../README.md). All architecture, API, plans, and migrations are documented in the **root README**.
+React + Vite UI for [Ekko](../README.md). All architecture, API, plans, migrations, and **thesis feature inventory** are documented in the **[root README](../README.md#thesis--evaluation-guide--feature-inventory)**.
 
 ## Quick start
 
@@ -31,8 +31,10 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 | Rewards | `RewardsScreen.jsx` | XP, badges, streaks |
 | Plans | `PlansScreen.jsx` | Stripe checkout, Studio API key |
 | Admin | `AdminDashboard.jsx` | Internal admin panel |
+| Journey | `JourneyScreen.jsx` | Timeline, Passport, Memories, Wrapped |
+| Share (public) | `ShareGate.jsx`, `pages/Share*.jsx` | `/s/`, `/m/`, `/wrapped/` without login |
 
-Navigation and plan state live in `App.jsx`. Plan rules live in `src/utils/planUtils.js` — keep aligned with the backend.
+Navigation and plan state live in `App.jsx`. Locales: `src/i18n/en.js`, `src/i18n/ar.js` (RTL). Plan rules live in `src/utils/planUtils.js` — keep aligned with the backend.
 
 **Artist unlock (Free):** positions 1–2 free per region list; positions 3–7 cost 2,500 XP; position 8+ needs Groove. See root README → *Artist unlock*.
 

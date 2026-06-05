@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { clampEmotionForPlan, isPaidPlan, dailyLimitFor } from '../utils/planUtils';
 import { useI18n } from '../i18n/I18nContext.jsx';
+import { matchEgyptianSlang, normalizeArabic } from '../utils/egyptianMoodWords.js';
 
 // ── Expanded Emotion → mood card mapping (7 core + 13 nuanced = 20 total) ─────
 const EMOTION_CARDS = {
@@ -85,8 +86,8 @@ const EMOTION_CARDS = {
     color: "#f9ca24", emoji: "🌱",
   },
   fedup: {
-    label: "Fed up & done", labelAr: "زهقت وما عادش قادر",
-    tags: ["Done", "Over it", "Hollow"], tagsAr: ["زهقت", "خلص", "ما عادش"],
+    label: "Bored & fed up", labelAr: "طفشان و زهقت",
+    tags: ["Restless", "Over it", "Done"], tagsAr: ["طفشان", "زهقت", "ما عادش"],
     color: "#b8860b", emoji: "🚪",
   },
   passion: {
@@ -126,7 +127,7 @@ function resolveNuancedEmotion(topEmotion, valence, arousal) {
     return "frustration";
   }
   if (topEmotion === "disgust") {
-    if (arousal < 0.35) return "fedup";
+    if (arousal < 0.55) return "fedup";
     return "disgust";
   }
   if (topEmotion === "fear") {
@@ -159,17 +160,36 @@ const TEXT_KEYWORDS = {
   exhaustion: ["tired","exhausted","drained","burnt out","can't anymore","done","تعبت","مش قادر","مش قادرة","خلصت","نفسيتي تعبانة","ما عادش","تقيل"],
   loneliness: ["alone","lonely","no one","isolated","left out","لوحدي","محدش","وحيد","وحيدة","معزول","معزولة","محدش فاهمني"],
   frustration:["frustrated","stuck","blocked","can't","nothing works","impossible","محبط","محبطة","مسدود","واقف في مكاني","مش شايل","مش ماشي"],
+  fedup:       ["fed up","bored","restless","sick of it","over it","طفشان","طفشانه","طفشانة","تفشان","تفشانه","تفشانه","زهقت","زهقان","زهقانه","انا طفشان","انا طفشانه","أنا طفشان","أنا طفشانه"],
 };
 
 function detectEmotionFromText(text) {
-  const lower = text.toLowerCase();
+  const slang = matchEgyptianSlang(text);
+  if (slang) return slang.emotion;
+
+  const norm = normalizeArabic(text);
   let best = "neutral", bestCount = 0;
   for (const [emotion, keywords] of Object.entries(TEXT_KEYWORDS)) {
-    const count = keywords.filter((kw) => lower.includes(kw)).length;
+    const count = keywords.filter((kw) => norm.includes(normalizeArabic(kw))).length;
     if (count > bestCount) { bestCount = count; best = emotion; }
   }
-  const NUANCED_TO_CORE = { nostalgia:"sadness", exhaustion:"sadness", loneliness:"sadness", frustration:"anger" };
+  const NUANCED_TO_CORE = {
+    nostalgia: "sadness", exhaustion: "sadness", loneliness: "sadness",
+    frustration: "anger", fedup: "disgust",
+  };
   return NUANCED_TO_CORE[best] || best;
+}
+
+function detectNuancedFromText(text) {
+  const slang = matchEgyptianSlang(text);
+  if (slang?.nuanced) return slang.nuanced;
+  const norm = normalizeArabic(text);
+  let best = "neutral", bestCount = 0;
+  for (const [emotion, keywords] of Object.entries(TEXT_KEYWORDS)) {
+    const count = keywords.filter((kw) => norm.includes(normalizeArabic(kw))).length;
+    if (count > bestCount) { bestCount = count; best = emotion; }
+  }
+  return best;
 }
 
 const QUIZ_QUESTIONS = [
@@ -451,8 +471,9 @@ export default function MoodInput({ userId = "", region = null, language = null,
     };
   };
 
-  const buildMood = (data, inputText = "") => {
-    const nuanced = resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
+  const buildMood = (data, inputText = "", { nuancedKey: forcedNuanced } = {}) => {
+    const slangNuanced = matchEgyptianSlang(inputText || data.transcript)?.nuanced;
+    const nuanced = forcedNuanced || slangNuanced || resolveNuancedEmotion(data.top_emotion, data.valence, data.arousal);
     const card    = EMOTION_CARDS[nuanced] || EMOTION_CARDS[data.top_emotion] || {
       label: data.top_emotion, labelAr: data.top_emotion,
       tags: [], tagsAr: [], color: "#b09ee0", emoji: "💭",
@@ -505,9 +526,18 @@ export default function MoodInput({ userId = "", region = null, language = null,
       setTextMood(mood); onMoodDetected?.(mood);
     } catch (err) {
       console.error("Text analysis failed, using fallback:", err);
+      const nuancedKey = detectNuancedFromText(textInput);
       const emotion = detectEmotionFromText(textInput);
-      const card    = EMOTION_CARDS[emotion];
-      const mood    = applyPlanToMood({ ...card, emotion, nuancedKey: emotion, valence: 0.5, energy: 0.5, text: textInput });
+      const card    = EMOTION_CARDS[nuancedKey] || EMOTION_CARDS[emotion];
+      const mood    = applyPlanToMood({
+        ...card, emotion, nuancedKey,
+        valence: nuancedKey === 'fedup' ? 0.3 : 0.5,
+        energy: nuancedKey === 'fedup' ? 0.42 : 0.5,
+        text: textInput,
+        reasoning: nuancedKey === 'fedup'
+          ? 'طفشان/طفشانه (Egyptian): bored, restless, fed up — not sadness.'
+          : undefined,
+      });
       setTextMood(mood); onMoodDetected?.(mood);
       persistMoodLog(mood);
     } finally {
@@ -877,14 +907,14 @@ export default function MoodInput({ userId = "", region = null, language = null,
           margin: 0;
           padding: 14px 16px 0;
           text-align: center;
-          font-size: 13px;
+          font-size: 18px;
           font-weight: 600;
           line-height: 1.45;
           color: #b09ee0;
         }
 
         .mi-plan-banner {
-          padding: 10px 16px; font-size: 12px; line-height: 1.45;
+          padding: 10px 16px; font-size: 17px; line-height: 1.45;
           color: rgba(255,255,255,0.72);
           background: rgba(124, 92, 231, 0.1);
           border-bottom: 1px solid rgba(124, 92, 231, 0.18);
@@ -906,7 +936,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           border: 1.5px solid rgba(124, 92, 231, 0.3);
           border-radius: 20px;
           background: transparent;
-          font-size: 12px;
+          font-size: 17px;
           font-weight: 700;
           color: #8b7eb8;
           cursor: pointer;
@@ -922,7 +952,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           display: flex; align-items: center; justify-content: center; gap: 10px;
           margin: 0 0 12px; padding: 12px 16px; border-radius: 12px;
           background: rgba(124, 92, 231, 0.18); border: 1px solid rgba(124, 92, 231, 0.35);
-          font-size: 14px; font-weight: 600; color: #e9d5ff;
+          font-size: 19px; font-weight: 600; color: #e9d5ff;
         }
         .mi-continuing-spinner {
           width: 18px; height: 18px; border-radius: 50%;
@@ -946,7 +976,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           border: none;
           border-radius: 12px;
           background: transparent;
-          font-size: 13px;
+          font-size: 18px;
           font-weight: 600;
           color: #6b5f8a;
           cursor: pointer;
@@ -993,15 +1023,15 @@ export default function MoodInput({ userId = "", region = null, language = null,
         .mic-ring.rec { border-color: #e74c3c; box-shadow: 0 0 0 6px rgba(231,76,60,.12); animation: recPulse 1.4s ease-in-out infinite; }
         .mic-ring.spin .mic-ico { animation: spin 1.2s linear infinite; }
         .mic-ring:disabled { cursor: default; opacity: .6; }
-        .mic-ico { font-size: 32px; line-height: 1; display: block; }
+        .mic-ico { font-size: 37px; line-height: 1; display: block; }
         .mic-pulse { position: absolute; inset: -10px; border-radius: 50%; border: 2px solid rgba(231,76,60,.35); animation: pulsRing 1.4s ease-out infinite; pointer-events: none; }
         @keyframes recPulse { 0%,100%{box-shadow:0 0 0 6px rgba(231,76,60,.12)}50%{box-shadow:0 0 0 10px rgba(231,76,60,.2)} }
         @keyframes pulsRing { 0%{transform:scale(1);opacity:1}100%{transform:scale(1.5);opacity:0} }
         @keyframes spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
-        .voice-lbl { font-size: 14px; color: #8b7eb8; text-align: center; margin: 0; font-weight: 500; }
-        .lang-badge { font-size: 12px; color: #a78bfa; font-weight: 600; margin: 0; background: rgba(124,92,231,.12); padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(124,92,231,.2); }
-        .voice-transcript { font-size: 12px; color: #8b7eb8; font-style: italic; margin: 0; padding: 8px 14px; background: rgba(255,255,255,.04); border-radius: 10px; max-width: 300px; text-align: center; line-height: 1.6; border: 1px solid rgba(255,255,255,.06); }
-        .voice-error { font-size: 12px; color: #f87171; text-align: center; max-width: 260px; margin: 0; line-height: 1.5; }
+        .voice-lbl { font-size: 19px; color: #8b7eb8; text-align: center; margin: 0; font-weight: 500; }
+        .lang-badge { font-size: 17px; color: #a78bfa; font-weight: 600; margin: 0; background: rgba(124,92,231,.12); padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(124,92,231,.2); }
+        .voice-transcript { font-size: 17px; color: #8b7eb8; font-style: italic; margin: 0; padding: 8px 14px; background: rgba(255,255,255,.04); border-radius: 10px; max-width: 300px; text-align: center; line-height: 1.6; border: 1px solid rgba(255,255,255,.06); }
+        .voice-error { font-size: 17px; color: #f87171; text-align: center; max-width: 260px; margin: 0; line-height: 1.5; }
         .waveform { display: flex; align-items: center; gap: 3px; height: 36px; }
         .wbar { display: block; width: 3px; height: var(--h,10px); border-radius: 2px; background: #7c5ce7; animation: wave .8s ease-in-out infinite alternate; }
         @keyframes wave { from{transform:scaleY(.4);opacity:.6}to{transform:scaleY(1.4);opacity:1} }
@@ -1016,7 +1046,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           border-top: 1px solid rgba(255, 255, 255, 0.06);
         }
         .mi-quick-label {
-          font-size: 12px;
+          font-size: 17px;
           color: #6b5f8a;
           text-align: center;
           margin: 0 0 12px;
@@ -1074,12 +1104,12 @@ export default function MoodInput({ userId = "", region = null, language = null,
         }
         .mi-emotion-lock {
           position: absolute;
-          font-size: 11px;
+          font-size: 16px;
           line-height: 1;
           text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
         }
         .mi-quick-unlock {
-          font-size: 11px;
+          font-size: 16px;
           color: #6b5f8a;
           text-align: center;
           margin: 10px 0 0;
@@ -1089,20 +1119,20 @@ export default function MoodInput({ userId = "", region = null, language = null,
           font-size: inherit;
         }
         .mi-emotion-emoji {
-          font-size: 16px;
+          font-size: 21px;
           line-height: 1;
           display: block;
         }
 
         /* ── Text ── */
         .text-wrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
-        .text-prompt { font-size: 14px; color: #8b7eb8; margin: 0; font-weight: 500; }
+        .text-prompt { font-size: 19px; color: #8b7eb8; margin: 0; font-weight: 500; }
         .text-area {
           width: 100%; box-sizing: border-box;
           border: 1.5px solid rgba(124,92,231,.2);
           border-radius: 12px;
           padding: 12px 14px;
-          font-size: 14px;
+          font-size: 19px;
           font-family: inherit;
           color: #e0d8ff;
           background: rgba(255,255,255,.04);
@@ -1113,7 +1143,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
         }
         .text-area::placeholder { color: #4b4570; }
         .text-area:focus { border-color: #7c5ce7; box-shadow: 0 0 0 3px rgba(124,92,231,.12); }
-        .analyse-btn { align-self: flex-end; padding: 10px 22px; border: none; border-radius: 12px; background: #7c5ce7; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .18s, transform .12s; }
+        .analyse-btn { align-self: flex-end; padding: 10px 22px; border: none; border-radius: 12px; background: #7c5ce7; color: #fff; font-size: 19px; font-weight: 600; cursor: pointer; transition: background .18s, transform .12s; }
         .analyse-btn:hover:not(:disabled) { background: #6347cc; transform: translateY(-1px); }
         .analyse-btn:disabled { opacity: .4; cursor: default; }
 
@@ -1123,7 +1153,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
         .quiz-pip { width: 24px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.1); transition: background .25s; }
         .quiz-pip.active { background: #7c5ce7; }
         .quiz-pip.done   { background: rgba(124,92,231,.4); }
-        .quiz-q { font-size: 15px; font-weight: 600; color: #e0d8ff; text-align: center; margin: 0; line-height: 1.5; }
+        .quiz-q { font-size: 20px; font-weight: 600; color: #e0d8ff; text-align: center; margin: 0; line-height: 1.5; }
         .quiz-options { width: 100%; display: flex; flex-direction: column; gap: 8px; }
         .quiz-opt {
           width: 100%;
@@ -1131,7 +1161,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           border: 1.5px solid rgba(255,255,255,.08);
           border-radius: 13px;
           background: rgba(255,255,255,.03);
-          font-size: 13px;
+          font-size: 18px;
           font-weight: 500;
           color: #c4b5f0;
           cursor: pointer;
@@ -1167,7 +1197,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
           border-radius: 12px;
           background: rgba(124,92,231,.08);
           color: #a78bfa;
-          font-size: 14px;
+          font-size: 19px;
           font-weight: 700;
           cursor: pointer;
           font-family: inherit;
@@ -1185,10 +1215,10 @@ export default function MoodInput({ userId = "", region = null, language = null,
           cursor: default;
           transform: none;
         }
-        .quiz-counter { font-size: 13px; color: #4b4570; margin: 0; font-weight: 600; }
+        .quiz-counter { font-size: 18px; color: #4b4570; margin: 0; font-weight: 600; }
 
         /* ── Result / shared ── */
-        .reset-btn { margin-top: 6px; padding: 10px 22px; border: 1.5px solid rgba(124,92,231,.3); border-radius: 12px; background: transparent; color: #a78bfa; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .18s, border-color .18s; font-family: inherit; }
+        .reset-btn { margin-top: 6px; padding: 10px 22px; border: 1.5px solid rgba(124,92,231,.3); border-radius: 12px; background: transparent; color: #a78bfa; font-size: 18px; font-weight: 600; cursor: pointer; transition: background .18s, border-color .18s; font-family: inherit; }
         .reset-btn:hover { background: rgba(124,92,231,.1); border-color: #7c5ce7; }
         .result-area { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; animation: fadeUp .35s ease; }
         @keyframes fadeUp { from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)} }
@@ -1202,24 +1232,24 @@ export default function MoodInput({ userId = "", region = null, language = null,
           text-align: center;
           box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 20%, transparent);
         }
-        .mood-emoji { font-size: 36px; margin-bottom: 8px; line-height: 1; }
-        .mood-label { font-size: 16px; font-weight: 700; color: #e0d8ff; margin: 0 0 10px; }
+        .mood-emoji { font-size: 41px; margin-bottom: 8px; line-height: 1; }
+        .mood-label { font-size: 21px; font-weight: 700; color: #e0d8ff; margin: 0 0 10px; }
         .mood-tags { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-        .mood-tag { padding: 4px 12px; border-radius: 20px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: 12px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
-        .mood-reasoning { font-size: 12px; color: #6b5f8a; font-style: italic; margin: 4px 0 0; line-height: 1.5; }
+        .mood-tag { padding: 4px 12px; border-radius: 20px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: 17px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+        .mood-reasoning { font-size: 17px; color: #6b5f8a; font-style: italic; margin: 4px 0 0; line-height: 1.5; }
         .mood-meters { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
         .meter-row { display: flex; align-items: center; gap: 8px; }
-        .meter-lbl { font-size: 11px; font-weight: 600; color: #6b5f8a; width: 52px; text-align: right; }
+        .meter-lbl { font-size: 16px; font-weight: 600; color: #6b5f8a; width: 52px; text-align: right; }
         .meter-bar { flex: 1; height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
         .meter-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
-        .meter-val { font-size: 11px; font-weight: 600; color: #6b5f8a; width: 30px; }
-        .confidence-note { font-size: 11px; color: #4b4570; margin: 0; }
+        .meter-val { font-size: 16px; font-weight: 600; color: #6b5f8a; width: 30px; }
+        .confidence-note { font-size: 16px; color: #4b4570; margin: 0; }
 
         .continue-btn {
           width: 100%; padding: 14px;
           border: none; border-radius: 14px;
           background: linear-gradient(135deg, #7c5ce7, #a855f7);
-          color: #fff; font-size: 15px; font-weight: 700;
+          color: #fff; font-size: 20px; font-weight: 700;
           cursor: pointer;
           transition: transform .15s, box-shadow .15s;
           box-shadow: 0 4px 20px rgba(124,92,231,.4);
@@ -1231,7 +1261,7 @@ export default function MoodInput({ userId = "", region = null, language = null,
         @media (max-width: 480px) {
           .mi-root { border-radius: 16px; max-width: 100%; }
           .mi-panel { min-height: 260px; padding: 18px 14px; gap: 16px; }
-          .mi-tab { font-size: 12px; padding: 10px 2px; }
+          .mi-tab { font-size: 17px; padding: 10px 2px; }
           .mi-tabs { padding: 4px; }
         }
       `}</style>
