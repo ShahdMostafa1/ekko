@@ -37,6 +37,7 @@ MOCK_AUDIO_URL = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_8cb3c0
 _ALLOWED_AUDIO_HOST_SUFFIXES = (
     "sonauto.ai",          # cdn.sonauto.ai, api.sonauto.ai, etc.
     "cdn.sonauto.ai",
+    "treblo.com",          # cdn.treblo.com — current Sonauto generation CDN
     "amazonaws.com",
     "cloudfront.net",
     "r2.dev",
