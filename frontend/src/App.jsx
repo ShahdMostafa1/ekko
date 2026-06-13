@@ -811,17 +811,11 @@ export default function App() {
           navigateTo(dest)
           setSidebarOpen(false)
         }}
-        onBilling={() => {
-          if (surveyLocked) {
-            promptSurveyRequired()
-            return
-          }
-          navigateTo('plans')
-          setSidebarOpen(false)
-        }}
+        onSurveyGate={promptSurveyRequired}
         onSignOut={handleSignOut}
         userName={userName}
         userEmail={user?.email || ''}
+        userId={user?.id}
         xp={xp}
         userPlan={userPlan}
         region={region}

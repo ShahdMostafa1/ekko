@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { id: 'billing', icon: '💳', labelKey: 'nav.billing'  },
 ]
 
-export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, onSignOut, userName, userEmail, xp, userPlan, surveyLocked = false, surveyPhase = 'pre' }) {
+export default function Sidebar({ open, onClose, screen, onNavigate, onSurveyGate, onSignOut, userName, userEmail, userId, xp, userPlan, surveyLocked = false, surveyPhase = 'pre' }) {
   const { t, locale, setLocale, isRtl } = useI18n()
   // Close on Escape key
   useEffect(() => {
@@ -27,10 +27,37 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onBilling, 
     return () => { document.body.style.overflow = prev }
   }, [open])
 
+  const openBillingPortal = async () => {
+    if (!userId) return
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/stripe/portal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data?.url) {
+        window.location.href = data.url
+        return
+      }
+      alert(
+        res.status === 404
+          ? t('nav.billingNoAccount')
+          : data?.detail || t('nav.billingError'),
+      )
+    } catch {
+      alert(t('nav.billingError'))
+    }
+  }
+
   // Navigate FIRST, then close after — order matters
   const handleNav = (id) => {
     if (id === 'billing') {
-      onBilling?.()
+      if (surveyLocked) {
+        onSurveyGate?.()
+        return
+      }
+      openBillingPortal()
     } else {
       onNavigate(id)
     }

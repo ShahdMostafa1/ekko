@@ -49,6 +49,8 @@ export default {
     study: 'الدراسة',
     plans: 'الباقات',
     billing: 'الفاتورة',
+    billingNoAccount: 'لا يوجد حساب فوترة بعد. اشترك في باقة مدفوعة أولاً، ثم يمكنك إدارة الفاتورة في Stripe.',
+    billingError: 'تعذّر فتح بوابة الفوترة. حاول مرة أخرى.',
     signOut: 'تسجيل الخروج',
     musicLover: 'عاشق الموسيقى',
     planFree: '🎧 مجاني',

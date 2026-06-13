@@ -778,12 +778,13 @@ body { margin: 0; }
   }
 }
 
-/* Rewards dashboard — full width */
+/* Rewards dashboard — full width (matches Journey) */
 .rewards-screen {
   width: 100%;
   max-width: none;
   margin: 0;
   padding-bottom: 48px;
+  animation: fadeUp 0.35s ease;
 }
 
 .rewards-hero {
@@ -807,7 +808,37 @@ body { margin: 0; }
 .rewards-stats-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
+}
+
+.rewards-stat-card {
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.rewards-stat-label {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #6b5f8a;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rewards-stat-value {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.0625rem);
+  font-weight: 800;
+  font-family: 'Syne', sans-serif;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rewards-badges-grid {
@@ -871,6 +902,10 @@ body { margin: 0; }
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 24px;
     align-items: start;
+  }
+
+  .rewards-progress-stats {
+    grid-column: 1 / -1;
   }
 
   .rewards-badges-grid {

@@ -49,6 +49,8 @@ export default {
     study: 'Study',
     plans: 'Plans',
     billing: 'Billing',
+    billingNoAccount: 'No billing account yet. Subscribe to a paid plan first, then you can manage billing in Stripe.',
+    billingError: 'Could not open the billing portal. Please try again.',
     signOut: 'Sign out',
     musicLover: 'Music Lover',
     planFree: '🎧 Free',

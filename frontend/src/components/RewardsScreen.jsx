@@ -315,7 +315,7 @@ export default function RewardsScreen({ xp = 0, userId = '', onStartChallenge, o
 
   return (
     <div
-      className="rh-root rewards-screen"
+      className="rewards-screen"
       style={{
         fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
         opacity: mounted ? 1 : 0,
@@ -456,76 +456,80 @@ export default function RewardsScreen({ xp = 0, userId = '', onStartChallenge, o
       {/* ══════════ PROGRESS TAB ══════════ */}
       {activeTab === 'progress' && (
         <div className="rewards-progress-body">
-          <Section label={`This week · ${streak > 0 ? `🔥 ${streak} day streak` : 'No streak yet'}`}>
-            <div className="rewards-section-card">
-            <div style={{ display: 'flex', gap: 6 }}>
-              {days.map((d, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                  <div style={{
-                    width: '100%', aspectRatio: '1', borderRadius: 10,
-                    background: d.today ? 'linear-gradient(135deg, #7c5ce7, #a855f7)' : d.active ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
-                    border: `1.5px solid ${d.today ? '#a855f7' : d.active ? 'rgba(124,92,231,.4)' : 'rgba(255,255,255,.07)'}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 19,
-                    boxShadow: d.today ? '0 0 14px rgba(124,92,231,.5)' : 'none',
-                    opacity: d.future ? .3 : 1, transition: 'all .2s',
-                  }}>{d.active ? '✓' : ''}</div>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: d.today ? '#a855f7' : '#4b4570' }}>{d.label}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{
-              marginTop: 10, padding: '10px 14px',
-              background: streak >= 3 ? 'rgba(168,85,247,.06)' : 'rgba(251,191,36,.06)',
-              border: `1px solid ${streak >= 3 ? 'rgba(168,85,247,.2)' : 'rgba(251,191,36,.2)'}`,
-              borderRadius: 12, fontSize: 17, color: streak >= 3 ? '#b09ee0' : '#92400e',
-            }}>
-              {streak === 0 && '💡 Check in today to start your streak!'}
-              {streak === 1 && '🌱 Day 1 — keep going tomorrow!'}
-              {streak === 2 && '⚡ 2 days in a row! One more for the 🔥 badge!'}
-              {streak >= 3  && streak < 7  && `🔥 ${streak} days strong! ${7  - streak} more for ⚡ Electric badge!`}
-              {streak >= 7  && streak < 30 && `⚡ ${streak}-day streak! ${30 - streak} more days to Moonwalker!`}
-              {streak >= 30 && '🌙 Legendary! 30-day streak achieved!'}
-            </div>
-            </div>
-          </Section>
-
-          <div>
-          {regions.length > 0 && (
-            <Section label={`Regions explored · ${regions.length} / ${Object.keys(REGION_META).length}`}>
-              <div className="rewards-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {regions.map(r => {
-                  const m   = REGION_META[r] || REGION_META.global
-                  const cnt = byRegion[r]?.length || 0
-                  const pct = badgeStats.totalSongs ? Math.round((cnt / badgeStats.totalSongs) * 100) : 0
-                  return (
-                    <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 17, fontWeight: 600, color: '#c4b5f0', width: 110, flexShrink: 0 }}>{m.emoji} {m.label}</span>
-                      <div style={{ flex: 1, height: 7, background: 'rgba(255,255,255,.07)', borderRadius: 4, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${pct}%`, background: m.color, borderRadius: 4, boxShadow: `0 0 6px ${m.color}88`, transition: 'width .8s ease' }} />
-                      </div>
-                      <span style={{ fontSize: 17, color: '#6b5f8a', fontWeight: 700, width: 24, textAlign: 'right' }}>{cnt}</span>
+          <div className="rewards-progress-streak">
+            <Section label={`This week · ${streak > 0 ? `🔥 ${streak} day streak` : 'No streak yet'}`}>
+              <div className="rewards-section-card">
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {days.map((d, i) => (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                      <div style={{
+                        width: '100%', aspectRatio: '1', borderRadius: 10,
+                        background: d.today ? 'linear-gradient(135deg, #7c5ce7, #a855f7)' : d.active ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
+                        border: `1.5px solid ${d.today ? '#a855f7' : d.active ? 'rgba(124,92,231,.4)' : 'rgba(255,255,255,.07)'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 19,
+                        boxShadow: d.today ? '0 0 14px rgba(124,92,231,.5)' : 'none',
+                        opacity: d.future ? .3 : 1, transition: 'all .2s',
+                      }}>{d.active ? '✓' : ''}</div>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: d.today ? '#a855f7' : '#4b4570' }}>{d.label}</span>
                     </div>
-                  )
-                })}
+                  ))}
+                </div>
+                <div style={{
+                  marginTop: 10, padding: '10px 14px',
+                  background: streak >= 3 ? 'rgba(168,85,247,.06)' : 'rgba(251,191,36,.06)',
+                  border: `1px solid ${streak >= 3 ? 'rgba(168,85,247,.2)' : 'rgba(251,191,36,.2)'}`,
+                  borderRadius: 12, fontSize: 17, color: streak >= 3 ? '#b09ee0' : '#92400e',
+                }}>
+                  {streak === 0 && '💡 Check in today to start your streak!'}
+                  {streak === 1 && '🌱 Day 1 — keep going tomorrow!'}
+                  {streak === 2 && '⚡ 2 days in a row! One more for the 🔥 badge!'}
+                  {streak >= 3  && streak < 7  && `🔥 ${streak} days strong! ${7  - streak} more for ⚡ Electric badge!`}
+                  {streak >= 7  && streak < 30 && `⚡ ${streak}-day streak! ${30 - streak} more days to Moonwalker!`}
+                  {streak >= 30 && '🌙 Legendary! 30-day streak achieved!'}
+                </div>
               </div>
             </Section>
+          </div>
+
+          {regions.length > 0 && (
+            <div className="rewards-progress-regions">
+              <Section label={`Regions explored · ${regions.length} / ${Object.keys(REGION_META).length}`}>
+                <div className="rewards-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {regions.map(r => {
+                    const m   = REGION_META[r] || REGION_META.global
+                    const cnt = byRegion[r]?.length || 0
+                    const pct = badgeStats.totalSongs ? Math.round((cnt / badgeStats.totalSongs) * 100) : 0
+                    return (
+                      <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontSize: 17, fontWeight: 600, color: '#c4b5f0', width: 110, flexShrink: 0 }}>{m.emoji} {m.label}</span>
+                        <div style={{ flex: 1, height: 7, background: 'rgba(255,255,255,.07)', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: m.color, borderRadius: 4, boxShadow: `0 0 6px ${m.color}88`, transition: 'width .8s ease' }} />
+                        </div>
+                        <span style={{ fontSize: 17, color: '#6b5f8a', fontWeight: 700, width: 24, textAlign: 'right' }}>{cnt}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </Section>
+            </div>
           )}
 
-          <Section label="Stats">
-            <div className="rewards-stats-grid">
-              {[
-                { label: 'Total XP',   value: xp,         icon: '⚡', color: '#a855f7' },
-                { label: 'Songs made', value: badgeStats.totalSongs, icon: '🎵', color: '#34d399' },
-                { label: 'Day streak', value: streak,     icon: '🔥', color: '#f59e0b' },
-                { label: 'Badges',     value: `${earnedBadges}/${BADGES.length}`, icon: '🏅', color: '#60a5fa' },
-              ].map(stat => (
-                <div key={stat.label} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)', borderRadius: 14, padding: '14px 16px' }}>
-                  <p style={{ margin: '0 0 6px', fontSize: 16, color: '#6b5f8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em' }}>{stat.icon} {stat.label}</p>
-                  <p style={{ margin: 0, fontSize: 33, fontWeight: 800, color: stat.color, fontFamily: "'Syne', sans-serif", textShadow: `0 0 16px ${stat.color}66` }}>{stat.value}</p>
-                </div>
-              ))}
-            </div>
-          </Section>
+          <div className="rewards-progress-stats">
+            <Section label="Stats">
+              <div className="rewards-stats-grid">
+                {[
+                  { label: 'Total XP',   value: xp,         icon: '⚡', color: '#a855f7' },
+                  { label: 'Songs made', value: badgeStats.totalSongs, icon: '🎵', color: '#34d399' },
+                  { label: 'Day streak', value: streak,     icon: '🔥', color: '#f59e0b' },
+                  { label: 'Badges',     value: `${earnedBadges}/${BADGES.length}`, icon: '🏅', color: '#60a5fa' },
+                ].map(stat => (
+                  <div key={stat.label} className="rewards-stat-card">
+                    <p className="rewards-stat-label">{stat.icon} {stat.label}</p>
+                    <p className="rewards-stat-value" style={{ color: stat.color, textShadow: `0 0 16px ${stat.color}66` }}>{stat.value}</p>
+                  </div>
+                ))}
+              </div>
+            </Section>
           </div>
         </div>
       )}
