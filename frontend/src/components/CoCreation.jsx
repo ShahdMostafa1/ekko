@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useI18n } from '../i18n/I18nContext.jsx'
+import { filterByInstantSearch } from '../utils/searchFilter'
 import {
   isArtistUnlockedFromApi,
   isPaidPlan,
@@ -79,6 +80,7 @@ export default function CoCreation({
   const [unlockModal, setUnlockModal]   = useState(null)
   const [unlockBusy, setUnlockBusy]       = useState(false)
   const [unlockError, setUnlockError]     = useState('')
+  const [artistSearch, setArtistSearch]   = useState('')
 
   // Derive which region's artists to show based on the chosen language,
   // not just the cultural region the user picked.
@@ -108,6 +110,7 @@ export default function CoCreation({
 
   useEffect(() => {
     setArtist('')
+    setArtistSearch('')
     loadArtistStyles()
   }, [loadArtistStyles])
 
@@ -221,6 +224,11 @@ export default function CoCreation({
 
   const selectedArtistObj = artistStyles.find(a => a.id === selectedArtist)
 
+  const visibleArtists = useMemo(
+    () => filterByInstantSearch(artistStyles, artistSearch, a => [a.label, a.description, a.id, a.region]),
+    [artistStyles, artistSearch],
+  )
+
   // Label shown above the artist grid to explain the filtering
   const langLabel = language?.label || ''
   const artistSectionLabel = langLabel
@@ -257,6 +265,19 @@ export default function CoCreation({
         {loadingStyles ? (
           <div className="cc-artist-loading">Loading styles…</div>
         ) : (
+          <>
+            {artistStyles.length > 4 && (
+              <input
+                type="search"
+                className="cc-artist-search"
+                placeholder="Type to filter artists…"
+                value={artistSearch}
+                onChange={e => setArtistSearch(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="Filter artist styles"
+              />
+            )}
           <div className="cc-artist-grid">
             <button
               className={`cc-artist-opt ${selectedArtist === '' ? 'sel' : ''}`}
@@ -266,15 +287,18 @@ export default function CoCreation({
               <span className="cao-label">Default</span>
               <span className="cao-desc">AI chooses</span>
             </button>
-            {artistStyles.map((a, idx) => {
-              const unlocked = isArtistUnlockedFromApi(a, idx, userPlan)
+            {visibleArtists.length === 0 && artistSearch ? (
+              <p className="cc-artist-empty">No artists match “{artistSearch}”</p>
+            ) : visibleArtists.map((a, idx) => {
+              const globalIdx = artistStyles.findIndex(x => x.id === a.id)
+              const unlocked = isArtistUnlockedFromApi(a, globalIdx, userPlan)
               const showXp = !unlocked && a.unlockable_with_xp
               return (
               <button
                 key={a.id}
                 type="button"
                 className={`cc-artist-opt ${selectedArtist === a.id ? 'sel' : ''} ${unlocked ? '' : 'locked'}`}
-                onClick={() => handleArtistClick(a, idx)}
+                onClick={() => handleArtistClick(a, globalIdx)}
               >
                 <span className="cao-emoji">{unlocked ? '🎤' : showXp ? '✨' : '🔒'}</span>
                 <span className="cao-label">{a.label}</span>
@@ -286,6 +310,7 @@ export default function CoCreation({
               </button>
             )})}
           </div>
+          </>
         )}
       </div>
 
@@ -449,6 +474,27 @@ export default function CoCreation({
         .cc-artist-loading {
           font-size: 18px; color: #8b7eb8;
           padding: 12px 0; text-align: center;
+        }
+        .cc-artist-search {
+          width: 100%; box-sizing: border-box;
+          margin-bottom: 10px;
+          padding: 10px 14px;
+          background: rgba(255,255,255,.06);
+          border: 1.5px solid rgba(176,158,224,.15);
+          border-radius: 12px;
+          color: #e0d8ff;
+          font-size: 17px;
+          font-family: inherit;
+          outline: none;
+        }
+        .cc-artist-search:focus { border-color: rgba(124,92,231,.5); }
+        .cc-artist-empty {
+          grid-column: 1 / -1;
+          text-align: center;
+          color: #8b7eb8;
+          font-size: 17px;
+          padding: 12px 0;
+          margin: 0;
         }
         .cc-lock-note {
           font-size: 17px; color: #8b7eb8; margin: 0 0 8px;

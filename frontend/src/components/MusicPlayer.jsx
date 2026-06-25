@@ -373,7 +373,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
         <p style={s.errorText}>{pollStatus || "No audio available."}</p>
         {onDone && (
           <button type="button" className="mp-done-btn" style={{ ...s.doneBtn, marginTop: 16 }} onClick={onDone}>
-            {t('player.doneSurvey')}
+            {t('player.doneContinue')}
           </button>
         )}
         <style>{keyframes}</style>
@@ -584,7 +584,7 @@ export default function MusicPlayer({ params, onSaved, onDone, userPlan = 'free'
           }}
           onClick={onDone}
         >
-          {t('player.doneSurvey')}
+          {t('player.doneContinue')}
         </button>
       )}
 

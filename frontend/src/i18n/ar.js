@@ -220,7 +220,7 @@ export default {
     openTab: 'فتح الصوت في تبويب جديد ↗',
     showLyrics: 'عرض الكلمات',
     hideLyrics: 'إخفاء الكلمات',
-    doneSurvey: 'تم — استبيان ما بعد الدراسة →',
+    doneContinue: 'تم — إنشاء أغنية أخرى →',
     pollingLyrics: 'كتابة كلمات أغنيتك…',
     pollingMelody: 'تلحين اللحن…',
     pollingVocals: 'تسجيل الغناء…',

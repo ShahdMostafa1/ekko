@@ -438,6 +438,24 @@ body { margin: 0; }
   animation: journeyPanelIn 0.4s ease both;
 }
 
+.journey-memories-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1.5px solid rgba(176, 158, 224, 0.15);
+  border-radius: 12px;
+  color: #e0d8ff;
+  font-size: 18px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.18s;
+}
+
+.journey-memories-search:focus {
+  border-color: rgba(124, 92, 231, 0.5);
+}
+
 .mc-capsule {
   transition: transform 0.25s, box-shadow 0.25s;
 }

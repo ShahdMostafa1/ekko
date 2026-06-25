@@ -1,7 +1,6 @@
 """
 Admin — user management (service role only).
 DELETE /admin/users/{user_id}  → remove user and all related data
-GET    /admin/surveys            → list study survey responses
 """
 
 from __future__ import annotations
@@ -9,8 +8,6 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Header, HTTPException
-
-from routers.survey import list_local_surveys
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -127,63 +124,6 @@ async def delete_user(
         "auth_deleted": auth_deleted,
         "rows_removed": counts,
     }
-
-
-@router.get("/surveys", summary="List all pre/post study survey responses")
-async def list_surveys(
-    x_admin_secret: str | None = Header(None, alias="X-Admin-Secret"),
-    authorization: str | None = Header(None),
-):
-    _require_admin(x_admin_secret, authorization)
-    sb = _get_supabase_admin()
-    if not sb:
-        local = list_local_surveys()
-        return {
-            "surveys": local,
-            "warning": "SUPABASE_URL or service key missing on backend — only in-memory surveys (if any).",
-        }
-    try:
-        resp = (
-            sb.table("study_surveys")
-            .select("*")
-            .order("created_at", desc=True)
-            .execute()
-        )
-        surveys = list(resp.data or [])
-    except Exception as e:
-        err = str(e)
-        if "study_surveys" in err.lower() or "does not exist" in err.lower():
-            local = list_local_surveys()
-            return {
-                "surveys": local,
-                "warning": "study_surveys table missing — run add_study_surveys.sql and extend_study_surveys.sql in Supabase.",
-            }
-        raise HTTPException(status_code=500, detail=err)
-
-    emails: dict[str, str] = {}
-    try:
-        profiles = sb.table("profiles").select("id, email").execute()
-        for p in profiles.data or []:
-            emails[p["id"]] = p.get("email") or ""
-    except Exception:
-        pass
-
-    seen = {(r.get("user_id"), r.get("phase")) for r in surveys}
-    for row in list_local_surveys():
-        key = (row.get("user_id"), row.get("phase"))
-        if key not in seen:
-            surveys.append(row)
-            seen.add(key)
-
-    for row in surveys:
-        row["email"] = emails.get(row.get("user_id"), "")
-
-    out: dict = {"surveys": surveys}
-    if not surveys:
-        out["warning"] = (
-            "No rows in study_surveys yet. Confirm migrations ran and testers completed pre/post surveys."
-        )
-    return out
 
 
 @router.get("/mood-logs", summary="List all mood log entries (service role)")

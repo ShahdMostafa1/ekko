@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { labelFor } from '../utils/surveyQuestions'
+import { filterByInstantSearch } from '../utils/searchFilter'
 import {
   ADMIN_EMAIL,
   adminApiFetch,
@@ -44,12 +44,6 @@ function fmtTime(iso) {
          d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })
 }
 
-function avgField(rows, key) {
-  const vals = rows.map(r => r[key]).filter(v => typeof v === 'number' && v >= 1)
-  if (!vals.length) return '—'
-  return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2)
-}
-
 function songHasMemory(song) {
   if (!song) return false
   return !!(
@@ -67,28 +61,6 @@ function countBy(rows, keyFn) {
     m[k] = (m[k] || 0) + 1
   }
   return m
-}
-
-function exportSurveysCsv(rows) {
-  if (!rows.length) return
-  const cols = [
-    'email', 'phase', 'age_group', 'music_frequency', 'ai_familiarity', 'used_mood_apps',
-    'primary_goal', 'cultural_importance', 'expected_mood_match', 'expected_quality', 'genre_preferences', 'loved_artists',
-    'experience_rating', 'ease_of_use', 'mood_accuracy', 'music_quality', 'cultural_fit',
-    'lyrics_quality', 'cocreation_rating', 'expectations_met', 'recommend_score', 'would_use_again',
-    'strongest_aspect', 'weakest_aspect', 'improvements_needed', 'created_at',
-  ]
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const lines = [
-    cols.join(','),
-    ...rows.map(r => cols.map(c => esc(c === 'email' ? (r.email || '') : r[c])).join(',')),
-  ]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `ekko-surveys-${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(a.href)
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -199,9 +171,6 @@ export default function AdminDashboard({ onExit }) {
   const [moodSessions, setMoodSessions] = useState([])
   const [rewards, setRewards]   = useState([])
   const [xpEvents, setXpEvents] = useState([])
-  const [surveys, setSurveys]   = useState([])
-  const [surveyWarning, setSurveyWarning] = useState('')
-  const [surveyPhaseFilter, setSurveyPhaseFilter] = useState('all')
   const [editingSongId, setEditingSongId] = useState(null)
   const [editSongTitle, setEditSongTitle] = useState('')
 
@@ -265,45 +234,6 @@ export default function AdminDashboard({ onExit }) {
 
       setRewards(r || [])
       setXpEvents(x || [])
-
-      let loadedSurveys = []
-      let warning = ''
-
-      try {
-        const sr = await adminApiFetch('/admin/surveys')
-        const sd = await sr.json().catch(() => ({}))
-        if (sr.ok) {
-          loadedSurveys = sd.surveys || []
-          if (sd.warning) warning = sd.warning
-        } else {
-          warning = sd.detail || `Survey API error (${sr.status}). Check Render ADMIN_SECRET and SUPABASE_SERVICE_ROLE_KEY.`
-          console.error('Admin surveys API:', sr.status, sd)
-        }
-      } catch (e) {
-        warning = 'Could not reach survey API. Check VITE_API_URL on Vercel.'
-        console.error('Admin surveys fetch failed:', e)
-      }
-
-      if (!loadedSurveys.length) {
-        const { data: directRows, error: directErr } = await supabase
-          .from('study_surveys')
-          .select('*')
-          .order('created_at', { ascending: false })
-        if (directErr) {
-          console.error('study_surveys direct read:', directErr)
-          if (!warning) {
-            warning = directErr.message?.includes('does not exist')
-              ? 'Table study_surveys missing — run SQL migrations in Supabase.'
-              : `Supabase read failed: ${directErr.message}`
-          }
-        } else if (directRows?.length) {
-          loadedSurveys = directRows
-          if (!warning) warning = 'Loaded from Supabase directly (API returned no rows).'
-        }
-      }
-
-      setSurveys(attachEmails(loadedSurveys))
-      setSurveyWarning(warning)
       setRefresh(new Date())
     } catch (e) {
       console.error('Admin load error:', e)
@@ -321,24 +251,6 @@ export default function AdminDashboard({ onExit }) {
   useEffect(() => {
     if (authed) loadData()
   }, [authed, loadData])
-
-  const postSurveys = surveys.filter(s => s.phase === 'post')
-  const preSurveys  = surveys.filter(s => s.phase === 'pre')
-  const surveyStats = useMemo(() => ({
-    preCount:  preSurveys.length,
-    postCount: postSurveys.length,
-    postAvg: {
-      experience: avgField(postSurveys, 'experience_rating'),
-      mood:       avgField(postSurveys, 'mood_accuracy'),
-      music:      avgField(postSurveys, 'music_quality'),
-      cultural:   avgField(postSurveys, 'cultural_fit'),
-      recommend:  avgField(postSurveys, 'recommend_score'),
-    },
-    preAvg: {
-      expectedMood: avgField(preSurveys, 'expected_mood_match'),
-      expectedQual: avgField(preSurveys, 'expected_quality'),
-    },
-  }), [postSurveys, preSurveys])
 
   if (!authChecked) {
     return (
@@ -365,34 +277,35 @@ export default function AdminDashboard({ onExit }) {
     plan:   getPlan(p.xp || 0, rewardByUser[p.id]?.streak || 0),
   }))
 
-  const filteredUsers = enrichedUsers.filter(u =>
-    (u.email || '').toLowerCase().includes(search.toLowerCase())
-  )
+  const filteredUsers = filterByInstantSearch(enrichedUsers, search, u => [
+    u.email, u.id, u.region, u.full_name,
+  ])
 
-  const q = search.trim().toLowerCase()
-  const filteredSongs = songs.filter(s => !q || [
-    emailOf[s.user_id], s.title, s.mood_label, s.emotion, s.region, s.language, s.artist_label,
-  ].some(v => (v || '').toLowerCase().includes(q)))
+  const filteredSongs = filterByInstantSearch(songs, search, s => [
+    emailOf[s.user_id], s.title, s.mood_label, s.emotion, s.region, s.language,
+    s.artist_label, s.scale, s.lyrics, s.memory_location, s.memory_note,
+  ])
 
-  const filteredMoods = moods.filter(m => !q || [
-    emailOf[m.user_id], m.emotion, m.transcript, m.region, m.language,
-  ].some(v => (v || '').toLowerCase().includes(q)))
+  const filteredMoods = filterByInstantSearch(moods, search, m => [
+    emailOf[m.user_id], m.emotion, m.transcript, m.region, m.language, m.mood_label,
+  ])
 
-  const filteredRewards = rewards.filter(r => !q || (emailOf[r.user_id] || '').toLowerCase().includes(q))
+  const filteredRewards = filterByInstantSearch(rewards, search, r => [
+    emailOf[r.user_id], r.user_id,
+  ])
 
-  const filteredXpEvents = xpEvents.filter(e => !q || (
-    (emailOf[e.user_id] || '').toLowerCase().includes(q) ||
-    (e.action || '').toLowerCase().includes(q)
-  ))
+  const filteredXpEvents = filterByInstantSearch(xpEvents, search, e => [
+    emailOf[e.user_id], e.action, e.user_id,
+  ])
 
   const memorySongs = songs.filter(songHasMemory)
-  const filteredMemories = memorySongs.filter(s => !q || [
-    emailOf[s.user_id], s.title, s.memory_location, s.memory_note, s.mood_label,
-  ].some(v => (v || '').toLowerCase().includes(q)))
+  const filteredMemories = filterByInstantSearch(memorySongs, search, s => [
+    emailOf[s.user_id], s.title, s.memory_location, s.memory_note, s.mood_label, s.emotion,
+  ])
 
-  const filteredSessions = moodSessions.filter(ms => !q || [
-    emailOf[ms.user_id], ms.mood_label, ms.emotion,
-  ].some(v => (v || '').toLowerCase().includes(q)))
+  const filteredSessions = filterByInstantSearch(moodSessions, search, ms => [
+    emailOf[ms.user_id], ms.mood_label, ms.emotion, ms.region, ms.language,
+  ])
 
   const deleteSongAdmin = async (id) => {
     if (!window.confirm('Delete this song permanently?')) return
@@ -449,26 +362,10 @@ export default function AdminDashboard({ onExit }) {
       setMoodSessions(prev => prev.filter(ms => ms.user_id !== u.id))
       setRewards(prev => prev.filter(r => r.user_id !== u.id))
       setXpEvents(prev => prev.filter(e => e.user_id !== u.id))
-      setSurveys(prev => prev.filter(sv => sv.user_id !== u.id))
     } catch (e) {
       window.alert(`Delete failed: ${e.message}`)
     }
   }
-
-  const filteredSurveys = surveys.filter(sv => {
-    if (surveyPhaseFilter !== 'all' && sv.phase !== surveyPhaseFilter) return false
-    const q = search.trim().toLowerCase()
-    if (!q) return true
-    const blob = [
-      sv.email, sv.phase, sv.age_group, sv.primary_goal, sv.used_mood_apps,
-      sv.expectations_met, sv.strongest_aspect, sv.weakest_aspect,
-      sv.improvements_needed, sv.genre_preferences, sv.loved_artists,
-      labelFor('primary_goal', sv.primary_goal),
-      labelFor('strongest_aspect', sv.strongest_aspect),
-      labelFor('genre_preferences', sv.genre_preferences),
-    ].join(' ').toLowerCase()
-    return blob.includes(q)
-  })
 
   // ── Overview stats ──────────────────────────────────────────────────────────
   const totalXp      = profiles.reduce((s, p) => s + (p.xp || 0), 0)
@@ -493,7 +390,6 @@ export default function AdminDashboard({ onExit }) {
     { table: 'mood_sessions', count: moodSessions.length, icon: '🎙' },
     { table: 'xp_events', count: xpEvents.length, icon: '⚡' },
     { table: 'user_rewards', count: rewards.length, icon: '🏅' },
-    { table: 'study_surveys', count: surveys.length, icon: '📋' },
   ]
 
   const recentActivity = [
@@ -511,7 +407,6 @@ export default function AdminDashboard({ onExit }) {
     { id:'sessions', icon:'🎙', label:'Sessions'  },
     { id:'memories', icon:'📔', label:'Memories'  },
     { id:'rewards',  icon:'🏅', label:'Rewards'   },
-    { id:'surveys',  icon:'📋', label:'Surveys'   },
   ]
 
   return (
@@ -576,7 +471,6 @@ export default function AdminDashboard({ onExit }) {
                 <StatCard label="Co-create"       value={moodSessions.length} sub="mood_sessions rows" accent="#c084fc" />
                 <StatCard label="XP Total"        value={totalXp}         sub={`${xpEvents.length} xp_events`} accent="#ffd93d" />
                 <StatCard label="Memory Capsules" value={memoriesCount}   sub="songs with memory"       accent="#f472b6" />
-                <StatCard label="Study Surveys"   value={surveys.length}  sub={`${preSurveys.length} pre · ${postSurveys.length} post`} accent="#34d399" />
                 <StatCard label="Active Streaks"  value={activeStreaks}   sub={`${rewards.length} reward rows`} accent="#f59e0b" />
               </div>
 
@@ -671,6 +565,8 @@ export default function AdminDashboard({ onExit }) {
                   placeholder="Search by email…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                   {filteredUsers.length} users
@@ -757,6 +653,8 @@ export default function AdminDashboard({ onExit }) {
                   placeholder="Search songs, user, mood, region…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                   {filteredSongs.length} / {songs.length} songs
@@ -856,6 +754,8 @@ export default function AdminDashboard({ onExit }) {
                   placeholder="Search user, emotion, transcript…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                   {filteredMoods.length} / {moods.length} sessions
@@ -926,6 +826,8 @@ export default function AdminDashboard({ onExit }) {
                   placeholder="Search user, mood label…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                   {filteredSessions.length} / {moodSessions.length} sessions
@@ -973,6 +875,8 @@ export default function AdminDashboard({ onExit }) {
                   placeholder="Search place, note, user…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                   {filteredMemories.length} / {memorySongs.length} capsules
@@ -1022,6 +926,8 @@ export default function AdminDashboard({ onExit }) {
                     placeholder="Search user email…"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                   />
                   <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                     {filteredRewards.length} / {rewards.length} users
@@ -1073,6 +979,8 @@ export default function AdminDashboard({ onExit }) {
                     placeholder="Search user or action…"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
                   />
                   <span style={{ marginLeft:'auto', fontSize:16, color:'#4a5168', fontFamily:'DM Mono,monospace' }}>
                     {filteredXpEvents.length} / {xpEvents.length} events
@@ -1101,158 +1009,6 @@ export default function AdminDashboard({ onExit }) {
                               <td style={s.td}>
                                 <button style={{ ...s.iconBtn, color:'#ff6b6b' }} title="Delete" onClick={() => deleteXpEventAdmin(e.id)}>🗑</button>
                               </td>
-                            </tr>
-                          ))
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ══ SURVEYS ══ */}
-          {tab === 'surveys' && (
-            <>
-              {surveyWarning && (
-                <div style={{
-                  marginBottom: 14, padding: '10px 14px', borderRadius: 10,
-                  background: 'rgba(251,191,36,.12)', border: '1px solid rgba(251,191,36,.35)',
-                  color: '#fde68a', fontSize: 17, lineHeight: 1.5,
-                }}>
-                  {surveyWarning}
-                </div>
-              )}
-              <div style={{ ...s.statsGrid, gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 20 }}>
-                <StatCard label="Pre-test responses" value={surveyStats.preCount} sub="Before using Ekko" accent="#00e5ff" />
-                <StatCard label="Post-test responses" value={surveyStats.postCount} sub="After session" accent="#34d399" />
-                <StatCard
-                  label="Post avg · mood accuracy"
-                  value={surveyStats.postAvg.mood}
-                  sub={`Music ${surveyStats.postAvg.music} · Cultural ${surveyStats.postAvg.cultural}`}
-                  accent="#a78bfa"
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-                {['all', 'pre', 'post'].map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setSurveyPhaseFilter(p)}
-                    style={{
-                      ...s.refreshBtn,
-                      background: surveyPhaseFilter === p ? 'rgba(124,92,231,.25)' : 'rgba(255,255,255,.04)',
-                      color: surveyPhaseFilter === p ? '#e0d8ff' : '#4a5168',
-                      borderColor: surveyPhaseFilter === p ? 'rgba(168,85,247,.4)' : 'rgba(255,255,255,.08)',
-                    }}
-                  >
-                    {p === 'all' ? 'All' : p === 'pre' ? 'Pre-test' : 'Post-test'}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  style={{ ...s.refreshBtn, marginLeft: 'auto' }}
-                  onClick={() => exportSurveysCsv(filteredSurveys)}
-                >
-                  Export CSV ↓
-                </button>
-              </div>
-
-              <div style={s.tableWrap}>
-                <div style={s.tableSearch}>
-                  <input
-                    style={s.searchInput}
-                    placeholder="Search email, goal, aspects, improvements…"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                  />
-                  <span style={{ marginLeft: 'auto', fontSize: 16, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>
-                    {filteredSurveys.length} responses
-                  </span>
-                </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
-                        {(surveyPhaseFilter === 'post'
-                          ? ['User', 'Overall', 'Ease', 'Mood', 'Music', 'Culture', 'Lyrics', 'Co-create', 'Expect met', 'Recommend', 'Use again', 'Best', 'Weakest', 'Improvements', 'Submitted']
-                          : surveyPhaseFilter === 'pre'
-                            ? ['User', 'Age', 'Music freq', 'AI fam', 'Mood apps', 'Goal', 'Culture imp', 'Exp mood', 'Exp quality', 'Genres', 'Fav artists', 'Improvements', 'Submitted']
-                            : ['User', 'Phase', 'Key scores / fields', 'Improvements', 'Submitted']
-                        ).map(h => (
-                          <th key={h} style={s.th}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredSurveys.length === 0
-                        ? <tr><td colSpan={15} style={s.emptyState}>
-                            {surveyPhaseFilter === 'post'
-                              ? 'No post-test yet. Users finish a song, then tap Done — post-study survey on the player screen.'
-                              : surveyPhaseFilter === 'pre'
-                                ? 'No pre-test responses yet.'
-                                : 'No survey responses yet.'}
-                          </td></tr>
-                        : filteredSurveys.map(sv => (
-                            <tr key={sv.id || `${sv.user_id}-${sv.phase}`} style={s.tr}>
-                              {surveyPhaseFilter === 'post' ? (
-                                <>
-                                  <td style={{ ...s.td, fontSize: 16, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
-                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
-                                  </td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.experience_rating}>{labelFor('experience_rating', sv.experience_rating)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.ease_of_use}>{labelFor('ease_of_use', sv.ease_of_use)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.mood_accuracy}>{labelFor('mood_accuracy', sv.mood_accuracy)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.music_quality}>{labelFor('music_quality', sv.music_quality)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.cultural_fit}>{labelFor('cultural_fit', sv.cultural_fit)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.lyrics_quality}>{labelFor('lyrics_quality', sv.lyrics_quality)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.cocreation_rating}>{labelFor('cocreation_rating', sv.cocreation_rating)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }}>{labelFor('expectations_met', sv.expectations_met)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.recommend_score}>{labelFor('recommend_score', sv.recommend_score)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.would_use_again}>{labelFor('would_use_again', sv.would_use_again)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }}>{labelFor('strongest_aspect', sv.strongest_aspect)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }}>{labelFor('weakest_aspect', sv.weakest_aspect)}</td>
-                                  <td style={{ ...s.td, fontSize: 16, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
-                                  <td style={{ ...s.td, fontSize: 16, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
-                                </>
-                              ) : surveyPhaseFilter === 'pre' ? (
-                                <>
-                                  <td style={{ ...s.td, fontSize: 16, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
-                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
-                                  </td>
-                                  <td style={s.td}>{labelFor('age_group', sv.age_group)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.music_frequency}>{labelFor('music_frequency', sv.music_frequency)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.ai_familiarity}>{labelFor('ai_familiarity', sv.ai_familiarity)}</td>
-                                  <td style={s.td}>{labelFor('used_mood_apps', sv.used_mood_apps)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }}>{labelFor('primary_goal', sv.primary_goal)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.cultural_importance}>{labelFor('cultural_importance', sv.cultural_importance)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.expected_mood_match}>{labelFor('expected_mood_match', sv.expected_mood_match)}</td>
-                                  <td style={{ ...s.td, fontSize: 16 }} title={sv.expected_quality}>{labelFor('expected_quality', sv.expected_quality)}</td>
-                                  <td style={{ ...s.td, fontSize: 16, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={labelFor('genre_preferences', sv.genre_preferences)}>{labelFor('genre_preferences', sv.genre_preferences)}</td>
-                                  <td style={{ ...s.td, fontSize: 16, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.loved_artists || ''}>{sv.loved_artists || '—'}</td>
-                                  <td style={{ ...s.td, fontSize: 16, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
-                                  <td style={{ ...s.td, fontSize: 16, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
-                                </>
-                              ) : (
-                                <>
-                                  <td style={{ ...s.td, fontSize: 16, fontFamily: 'DM Mono,monospace', color: '#4a5168' }}>
-                                    {sv.email || emailOf[sv.user_id] || sv.user_id?.slice(0, 10) || '—'}
-                                  </td>
-                                  <td style={s.td}>
-                                    <span style={{ ...s.tag, background: sv.phase === 'pre' ? 'rgba(0,229,255,.1)' : 'rgba(52,211,153,.1)', color: sv.phase === 'pre' ? '#00e5ff' : '#34d399', border: `1px solid ${sv.phase === 'pre' ? 'rgba(0,229,255,.3)' : 'rgba(52,211,153,.3)'}` }}>
-                                      {sv.phase}
-                                    </span>
-                                  </td>
-                                  <td style={{ ...s.td, fontSize: 16 }}>
-                                    {sv.phase === 'pre'
-                                      ? `Goal: ${labelFor('primary_goal', sv.primary_goal)} · Exp mood ${sv.expected_mood_match ?? '—'}`
-                                      : `Mood ${sv.mood_accuracy ?? '—'} · Music ${sv.music_quality ?? '—'} · Rec ${sv.recommend_score ?? '—'}`}
-                                  </td>
-                                  <td style={{ ...s.td, fontSize: 16, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv.improvements_needed || ''}>{sv.improvements_needed || '—'}</td>
-                                  <td style={{ ...s.td, fontSize: 16, color: '#4a5168', fontFamily: 'DM Mono,monospace' }}>{fmtTime(sv.created_at)}</td>
-                                </>
-                              )}
                             </tr>
                           ))
                       }

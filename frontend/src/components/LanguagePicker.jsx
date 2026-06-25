@@ -2,7 +2,9 @@
  * LanguagePicker — shown after region selection, before mood input.
  * Lets the user choose which language they want the song lyrics in.
  */
+import { useState, useMemo } from 'react'
 import { useI18n } from '../i18n/I18nContext.jsx'
+import { filterByInstantSearch } from '../utils/searchFilter'
 
 const REGION_LANGUAGES = {
   arabic: [
@@ -66,10 +68,15 @@ const REGION_COLOR = {
 
 export default function LanguagePicker({ region, onComplete }) {
   const { t, isRtl } = useI18n()
+  const [search, setSearch] = useState('')
   const regionId  = region?.id || 'global'
   const regionLabel = t(`onboarding.regions.${regionId}`)
   const langs     = REGION_LANGUAGES[regionId] || REGION_LANGUAGES.global
   const accentColor = REGION_COLOR[regionId] || '#7c5ce7'
+  const filteredLangs = useMemo(
+    () => filterByInstantSearch(langs, search, l => [l.label, l.native, l.code]),
+    [langs, search],
+  )
 
   return (
     <div className="lp-root" dir={isRtl ? 'rtl' : 'ltr'}>
@@ -85,8 +92,23 @@ export default function LanguagePicker({ region, onComplete }) {
         </p>
       </div>
 
+      {langs.length > 4 && (
+        <input
+          type="search"
+          className="lp-search"
+          placeholder="Type to filter languages…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="Filter languages"
+        />
+      )}
+
       <div className="lp-list">
-        {langs.map((lang, i) => (
+        {filteredLangs.length === 0 ? (
+          <p className="lp-empty">No languages match “{search}”</p>
+        ) : filteredLangs.map((lang, i) => (
           <button
             key={lang.code}
             className="lp-item"
@@ -149,6 +171,33 @@ export default function LanguagePicker({ region, onComplete }) {
           display: flex;
           flex-direction: column;
           gap: 8px;
+        }
+
+        .lp-search {
+          width: 100%;
+          box-sizing: border-box;
+          margin-bottom: 14px;
+          padding: 11px 14px;
+          background: rgba(255,255,255,.06);
+          border: 1.5px solid rgba(176,158,224,.15);
+          border-radius: 12px;
+          color: #e0d8ff;
+          font-size: 18px;
+          font-family: inherit;
+          outline: none;
+          transition: border-color .18s;
+        }
+
+        .lp-search:focus {
+          border-color: color-mix(in srgb, var(--ac, #7c5ce7) 55%, transparent);
+        }
+
+        .lp-empty {
+          text-align: center;
+          color: #8b7eb8;
+          font-size: 17px;
+          padding: 20px 0;
+          margin: 0;
         }
 
         .lp-item {

@@ -220,7 +220,7 @@ export default {
     openTab: 'Open audio in new tab ↗',
     showLyrics: 'Show lyrics',
     hideLyrics: 'Hide lyrics',
-    doneSurvey: 'Done — post-study survey →',
+    doneContinue: 'Done — create another →',
     pollingLyrics: 'Writing your song lyrics…',
     pollingMelody: 'Composing the melody…',
     pollingVocals: 'Recording vocals…',

@@ -3,6 +3,7 @@ import { useI18n } from '../i18n/I18nContext.jsx'
 import { useCountUp } from '../hooks/useCountUp'
 import { computeWrapped, computeMoodTimeline, computePassport } from '../utils/insights'
 import { hasMemory } from '../utils/memoryCapsule'
+import { filterByInstantSearch } from '../utils/searchFilter'
 import { EMOTION_EMOJI } from '../utils/regions'
 import MemoryCapsuleCard from './MemoryCapsuleCard'
 import WrappedDisplay from './WrappedDisplay'
@@ -277,8 +278,16 @@ function PassportTab({ passport, t }) {
 }
 
 function MemoriesTab({ songs, t, onCreate }) {
-  const capsules = songs.filter(hasMemory).sort(
-    (a, b) => new Date(b.created_at) - new Date(a.created_at),
+  const [search, setSearch] = useState('')
+  const capsules = useMemo(
+    () => songs.filter(hasMemory).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [songs],
+  )
+  const filteredCapsules = useMemo(
+    () => filterByInstantSearch(capsules, search, s => [
+      s.title, s.mood_label, s.memory_location, s.memory_note, s.emotion, s.region,
+    ]),
+    [capsules, search],
   )
 
   if (!capsules.length) {
@@ -300,15 +309,36 @@ function MemoriesTab({ songs, t, onCreate }) {
   return (
     <div className="journey-panel journey-panel--card">
       <p className="journey-memories-intro" style={{ margin: '0 0 16px', fontSize: 18, color: 'rgba(255,255,255,0.5)', lineHeight: 1.45 }}>
-        {t('journey.memoriesSub', { count: capsules.length })}
+        {search
+          ? `${filteredCapsules.length} of ${capsules.length} capsules`
+          : t('journey.memoriesSub', { count: capsules.length })}
       </p>
+      {capsules.length > 3 && (
+        <input
+          type="search"
+          className="journey-memories-search"
+          placeholder="Type to filter memories…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="Filter memory capsules"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {filteredCapsules.length === 0 ? (
+        <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 18, padding: '24px 0' }}>
+          No memories match “{search}”
+        </p>
+      ) : (
       <div className="mc-grid">
-        {capsules.map((song, i) => (
+        {filteredCapsules.map((song, i) => (
           <div key={song.id} style={{ animation: 'journeyCardIn 0.45s ease both', animationDelay: `${i * 0.08}s` }}>
             <MemoryCapsuleCard song={song} />
           </div>
         ))}
       </div>
+      )}
     </div>
   )
 }

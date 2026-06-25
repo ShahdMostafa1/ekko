@@ -6,12 +6,11 @@ const NAV_ITEMS = [
   { id: 'history', icon: '🎵', labelKey: 'nav.songs'    },
   { id: 'journey', icon: '📈', labelKey: 'nav.journey'  },
   { id: 'rewards', icon: '🏅', labelKey: 'nav.rewards'  },
-  { id: 'survey',  icon: '📋', labelKey: 'nav.study'    },
   { id: 'plans',   icon: '✨', labelKey: 'nav.plans'    },
   { id: 'billing', icon: '💳', labelKey: 'nav.billing'  },
 ]
 
-export default function Sidebar({ open, onClose, screen, onNavigate, onSurveyGate, onSignOut, userName, userEmail, userId, xp, userPlan, surveyLocked = false, surveyPhase = 'pre' }) {
+export default function Sidebar({ open, onClose, screen, onNavigate, onSignOut, userName, userEmail, userId, xp, userPlan }) {
   const { t, locale, setLocale, isRtl } = useI18n()
   // Close on Escape key
   useEffect(() => {
@@ -53,10 +52,6 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onSurveyGat
   // Navigate FIRST, then close after — order matters
   const handleNav = (id) => {
     if (id === 'billing') {
-      if (surveyLocked) {
-        onSurveyGate?.()
-        return
-      }
       openBillingPortal()
     } else {
       onNavigate(id)
@@ -193,12 +188,10 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onSurveyGat
 
           {NAV_ITEMS.map(item => {
             const isActive = screen === item.id
-            const navBlocked = surveyLocked && item.id !== 'survey'
             return (
               <button
                 key={item.id}
                 onClick={(e) => { e.stopPropagation(); handleNav(item.id) }}
-                title={navBlocked ? (surveyPhase === 'post' ? t('survey.gatePost') : t('survey.gatePre')) : undefined}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '11px 13px', marginBottom: 3,
@@ -211,8 +204,6 @@ export default function Sidebar({ open, onClose, screen, onNavigate, onSurveyGat
                   borderRadius: 12, cursor: 'pointer',
                   transition: 'all .18s', textAlign: isRtl ? 'right' : 'left',
                   fontFamily: "'DM Sans', sans-serif",
-                  opacity: navBlocked ? 0.55 : 1,
-                  cursor: navBlocked ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={e => {
                   if (!isActive) {

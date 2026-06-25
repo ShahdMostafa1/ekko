@@ -44,7 +44,6 @@ from routers.rewards       import router as rewards_router
 from routers.stripe_router import router as stripe_router
 from routers.api_v1        import router as api_v1_router
 from routers.admin         import router as admin_router
-from routers.survey        import router as survey_router
 from routers.share         import router as share_router
 from routers.auth          import router as auth_router
 
@@ -54,7 +53,6 @@ app.include_router(rewards_router)
 app.include_router(stripe_router)
 app.include_router(api_v1_router)
 app.include_router(admin_router)
-app.include_router(survey_router)
 app.include_router(share_router)
 app.include_router(auth_router)
 

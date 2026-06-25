@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef, memo } from 'react'
+import { useState, useEffect, useRef, memo, useMemo } from 'react'
 import { applyHistoryLimit, canDownload } from '../utils/planUtils'
 import { openAudioUrl } from '../utils/audioProxy'
 import { getHistoryAudio, pauseOtherPageAudio } from '../utils/historyAudio'
+import { filterByInstantSearch, searchQueryActive } from '../utils/searchFilter'
+import { hasMemory } from '../utils/memoryCapsule'
 import {
   applyAudioSource,
   fetchBlobAudioUrl,
@@ -24,6 +26,27 @@ const REGION_META = {
 const EMOTION_EMOJI = {
   joy: '☀️', sadness: '🌧️', anger: '🔥',
   fear: '🌀', surprise: '⚡', disgust: '🌫️', neutral: '🌿',
+}
+
+/** Fields visible on the song card — excludes lyrics/language metadata that false-match single letters. */
+function songHistorySearchFields(song) {
+  const meta = REGION_META[song.region] || REGION_META.global
+  const fields = []
+
+  if (song.title?.trim()) {
+    fields.push(song.title)
+  } else if (song.mood_label?.trim()) {
+    fields.push(song.mood_label)
+  } else if (song.emotion) {
+    fields.push(song.emotion)
+  }
+
+  fields.push(meta.label)
+  if (song.artist_label?.trim()) fields.push(song.artist_label)
+  if (song.memory_location?.trim()) fields.push(song.memory_location)
+  if (song.memory_note?.trim()) fields.push(song.memory_note)
+
+  return fields
 }
 
 const SongCard = memo(function SongCard({
@@ -549,30 +572,30 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
   // ── Filter + sort + search ─────────────────────────────────
   const { visible: planVisible, truncated, hidden } = applyHistoryLimit(songs, userPlan)
   const favCount = planVisible.filter(s => s.is_favorite).length
-  const base = filter === 'all'
-    ? planVisible
-    : filter === 'favorites'
-    ? planVisible.filter(s => s.is_favorite)
-    : (byRegion[filter] || []).filter(s => planVisible.some(v => v.id === s.id))
-  const searched = search.trim()
-    ? base.filter(s => {
-        const q = search.toLowerCase()
-        return (
-          (s.title       || '').toLowerCase().includes(q) ||
-          (s.mood_label  || '').toLowerCase().includes(q) ||
-          (s.emotion     || '').toLowerCase().includes(q) ||
-          (s.lyrics      || '').toLowerCase().includes(q) ||
-          (s.memory_location || '').toLowerCase().includes(q) ||
-          (s.memory_note || '').toLowerCase().includes(q)
-        )
-      })
-    : base
-  const filteredSongs = [...searched].sort((a, b) => {
-    if (sortBy === 'newest')  return new Date(b.created_at) - new Date(a.created_at)
-    if (sortBy === 'oldest')  return new Date(a.created_at) - new Date(b.created_at)
-    if (sortBy === 'energy')  return (b.energy ?? 0) - (a.energy ?? 0)
-    return 0
-  })
+  const memCount = planVisible.filter(hasMemory).length
+  const hasQuery = searchQueryActive(search)
+
+  const filteredSongs = useMemo(() => {
+    let base = planVisible
+    if (filter === 'favorites') {
+      base = base.filter(s => s.is_favorite)
+    } else if (filter === 'memories') {
+      base = base.filter(hasMemory)
+    } else if (filter !== 'all' && !hasQuery) {
+      base = (byRegion[filter] || []).filter(s => planVisible.some(v => v.id === s.id))
+    }
+
+    const searched = hasQuery
+      ? filterByInstantSearch(base, search, songHistorySearchFields)
+      : base
+
+    return [...searched].sort((a, b) => {
+      if (sortBy === 'newest')  return new Date(b.created_at) - new Date(a.created_at)
+      if (sortBy === 'oldest')  return new Date(a.created_at) - new Date(b.created_at)
+      if (sortBy === 'energy')  return (b.energy ?? 0) - (a.energy ?? 0)
+      return 0
+    })
+  }, [planVisible, filter, search, sortBy, byRegion, hasQuery])
 
   const regions = Object.keys(byRegion)
 
@@ -590,6 +613,8 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           <p className="sh-sub">
             {loading ? 'Loading…' : truncated
               ? `${planVisible.length} of ${songs.length} tracks (Free plan)`
+              : hasQuery
+              ? `${filteredSongs.length} of ${planVisible.length} tracks`
               : `${songs.length} track${songs.length !== 1 ? 's' : ''} created`}
           </p>
           <button
@@ -616,10 +641,13 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
           <span className="sh-search-icon">🔍</span>
           <input
             className="sh-search"
-            type="text"
-            placeholder="Search songs, moods, lyrics…"
+            type="search"
+            placeholder="Search by title or mood…"
             value={search}
             onChange={e => setSearch(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="Search songs"
           />
           {search && (
             <button className="sh-search-clear" onClick={() => setSearch('')}>✕</button>
@@ -645,6 +673,14 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         <button className={`sh-pill ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
           All ({songs.length})
         </button>
+        {memCount > 0 && (
+          <button
+            className={`sh-pill ${filter === 'memories' ? 'active' : ''}`}
+            onClick={() => setFilter(f => f === 'memories' ? 'all' : 'memories')}
+          >
+            📔 Memories ({memCount})
+          </button>
+        )}
         {regions.length > 1 && regions.map(r => {
             const m = REGION_META[r] || REGION_META.global
             return (
@@ -666,7 +702,7 @@ export default function SongHistory({ userId = '', userPlan = 'free', onUpgrade 
         <div className="sh-empty">
           <p className="sh-empty-icon">{search ? '🔍' : '🎵'}</p>
           <p className="sh-empty-title">
-            {search ? 'No results found' : filter === 'favorites' ? 'No favourites yet' : 'No songs yet'}
+            {search ? 'No results found' : filter === 'favorites' ? 'No favourites yet' : filter === 'memories' ? 'No memory capsules yet' : 'No songs yet'}
           </p>
           <p className="sh-empty-sub">
             {search
